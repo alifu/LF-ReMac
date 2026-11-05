@@ -57,11 +57,8 @@ final class ScreenCapturer {
             ?? content.displays.first
         else { throw ScreenCaptureError.noDisplayAvailable }
 
-        let size = CaptureSize.fitting(
-            width: display.width,
-            height: display.height,
-            maxLongSide: settings.maxLongSide
-        )
+        // SCDisplay.width/height are points; use real pixels so the encoder size always matches.
+        let size = CaptureSize.mainDisplay(maxLongSide: settings.maxLongSide)
         let configuration = SCStreamConfiguration()
         configuration.width = size.width
         configuration.height = size.height

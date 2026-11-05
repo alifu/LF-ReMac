@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Pixel dimensions for the captured stream. Always even, as H.264 chroma subsampling requires.
@@ -14,6 +15,17 @@ struct CaptureSize: Equatable, Sendable {
         return CaptureSize(
             width: evenSide(Double(width) * scale),
             height: evenSide(Double(height) * scale)
+        )
+    }
+
+    /// Main display in real pixels (not points), scaled to the limit. `ScreenCapturer` and the
+    /// encoder must both use this so frame and encoder dimensions always match.
+    static func mainDisplay(maxLongSide: Int) -> CaptureSize {
+        let displayID = CGMainDisplayID()
+        return fitting(
+            width: CGDisplayPixelsWide(displayID),
+            height: CGDisplayPixelsHigh(displayID),
+            maxLongSide: maxLongSide
         )
     }
 

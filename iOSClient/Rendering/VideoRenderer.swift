@@ -16,13 +16,15 @@ final class VideoRenderer: @unchecked Sendable {
     var onKeyframeNeeded: (@Sendable () -> Void)?
 
     private let logger = AppLog.logger(category: "renderer")
+    private let statsCollector: StatsCollector?
     private var factory = SampleBufferFactory()
     private(set) var isAwaitingKeyframe = true
     private var hasRequestedKeyframe = false
 
-    init() {
+    init(statsCollector: StatsCollector? = nil) {
         displayLayer = AVSampleBufferDisplayLayer()
         displayLayer.videoGravity = .resizeAspect
+        self.statsCollector = statsCollector
     }
 
     func handle(_ frame: Frame) {
@@ -84,6 +86,7 @@ final class VideoRenderer: @unchecked Sendable {
                 isKeyframe: isKeyframe
             )
             displayLayer.enqueue(sampleBuffer)
+            statsCollector?.recordRenderedFrame()
             if isKeyframe {
                 isAwaitingKeyframe = false
                 hasRequestedKeyframe = false

@@ -4,6 +4,7 @@ import Observation
 import RemoteCore
 
 /// Connects to a Mac host, feeds received frames to the renderer and asks for keyframes when needed.
+/// While connected it samples `stats` once per second and sends a latency ping with each sample.
 @MainActor
 @Observable
 final class StreamClient {
@@ -15,12 +16,22 @@ final class StreamClient {
     }
 
     private static let receiveChunkBytes = 256 * 1024
+    private static let statsInterval = Duration.seconds(1)
 
     private(set) var state: State = .idle
-    let renderer = VideoRenderer()
+    private(set) var stats = StreamStats.empty
+    let renderer: VideoRenderer
 
+    @ObservationIgnored private let collector: StatsCollector
+    @ObservationIgnored private var statsTask: Task<Void, Never>?
     private let logger = AppLog.logger(category: "client")
     private var link: Link?
+
+    init() {
+        let collector = StatsCollector()
+        self.collector = collector
+        renderer = VideoRenderer(statsCollector: collector)
+    }
 
     var isActive: Bool {
         switch state {
@@ -33,8 +44,9 @@ final class StreamClient {
         disconnect()
         state = .connecting(name)
         renderer.reset()
+        collector.reset()
 
-        let link = Link(endpoint: endpoint, renderer: renderer)
+        let link = Link(endpoint: endpoint, renderer: renderer, collector: collector)
         link.onStateChange = { [weak self, weak link] newState in
             Task { @MainActor in
                 guard let self, let link, self.link === link else { return }
@@ -47,9 +59,11 @@ final class StreamClient {
     }
 
     func disconnect() {
+        stopStatsLoop()
         link?.close()
         link = nil
         renderer.onKeyframeNeeded = nil
+        stats = .empty
         if isActive { state = .idle }
     }
 
@@ -57,17 +71,48 @@ final class StreamClient {
         switch linkState {
         case .connected:
             state = .connected(name)
+            startStatsLoop()
         case .closed(let reason):
             logger.info("Connection closed")
+            stopStatsLoop()
             link = nil
+            stats = .empty
             state = reason.map { .failed($0) } ?? .idle
         }
+    }
+
+    // MARK: - Statistics
+
+    private func startStatsLoop() {
+        stopStatsLoop()
+        statsTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.statsInterval)
+                guard !Task.isCancelled, let self else { return }
+                self.sampleStats()
+            }
+        }
+    }
+
+    private func stopStatsLoop() {
+        statsTask?.cancel()
+        statsTask = nil
+    }
+
+    private func sampleStats() {
+        link?.send(Frame.ping(sentAtMicros: MonotonicClock.nowMicros()))
+        stats = collector.snapshot(now: .now)
     }
 }
 
 private extension Frame {
     static func keyframeRequest() -> Frame {
         Frame(type: .keyframeRequest, timestampMicros: 0, payload: Data())
+    }
+
+    /// Latency probe: the host echoes it back unchanged, so the timestamp survives the round trip.
+    static func ping(sentAtMicros: UInt64) -> Frame {
+        Frame(type: .ping, timestampMicros: sentAtMicros, payload: Data())
     }
 }
 
@@ -82,28 +127,33 @@ private final class Link: @unchecked Sendable {
 
     private let connection: NWConnection
     private let renderer: VideoRenderer
+    private let collector: StatsCollector
     private let queue = DispatchQueue(label: "com.alifu.lfremac.client", qos: .userInteractive)
     private let logger = AppLog.logger(category: "link")
     private var decoder = FrameDecoder()
     private var isClosed = false
 
-    init(endpoint: NWEndpoint, renderer: VideoRenderer) {
+    init(endpoint: NWEndpoint, renderer: VideoRenderer, collector: StatsCollector) {
         let tcp = NWProtocolTCP.Options()
         tcp.noDelay = true
         tcp.enableKeepalive = true
         connection = NWConnection(to: endpoint, using: NWParameters(tls: nil, tcp: tcp))
         self.renderer = renderer
+        self.collector = collector
     }
 
     func start(chunkBytes: Int) {
         connection.stateUpdateHandler = { [weak self] state in
-            self?.queue.async { self?.handle(state: state, chunkBytes: chunkBytes) }
+            guard let self else { return }
+            queue.async { self.handle(state: state, chunkBytes: chunkBytes) }
         }
         connection.start(queue: queue)
     }
 
     func send(_ frame: Frame) {
-        connection.send(content: FrameEncoder.encode(frame), completion: .contentProcessed { _ in })
+        queue.async { [self] in
+            connection.send(content: FrameEncoder.encode(frame), completion: .contentProcessed { _ in })
+        }
     }
 
     func close() {
@@ -141,8 +191,9 @@ private final class Link: @unchecked Sendable {
     private func handleReceived(_ data: Data?, isComplete: Bool, error: NWError?, chunkBytes: Int) {
         guard !isClosed else { return }
         if let data, !data.isEmpty {
+            collector.recordBytes(data.count)
             do {
-                for frame in try decoder.append(data) { renderer.handle(frame) }
+                for frame in try decoder.append(data) { route(frame) }
             } catch {
                 logger.error("Protocol error: \(String(describing: error), privacy: .public)")
                 finish(reason: "The Mac sent data this app does not understand.")
@@ -156,6 +207,23 @@ private final class Link: @unchecked Sendable {
         } else {
             receive(chunkBytes: chunkBytes)
         }
+    }
+
+    private func route(_ frame: Frame) {
+        if frame.type == .ping {
+            recordRoundTrip(sentAtMicros: frame.timestampMicros)
+        } else {
+            renderer.handle(frame)
+        }
+    }
+
+    private func recordRoundTrip(sentAtMicros: UInt64) {
+        let receivedMicros = MonotonicClock.nowMicros()
+        guard let milliseconds = MonotonicClock.roundTripMilliseconds(
+            sentMicros: sentAtMicros,
+            receivedMicros: receivedMicros
+        ) else { return }
+        collector.recordRoundTrip(milliseconds: milliseconds)
     }
 
     private func finish(reason: String?) {

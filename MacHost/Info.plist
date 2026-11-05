@@ -22,5 +22,7 @@
 	<string>1</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>LF-ReMac Host streams your screen to your paired iPhone.</string>
 </dict>
 </plist>

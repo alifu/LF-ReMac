@@ -33,6 +33,7 @@ targets:
       path: MacHost/Info.plist
       properties:
         CFBundleDisplayName: LF-ReMac Host
+        NSScreenCaptureUsageDescription: LF-ReMac Host streams your screen to your paired iPhone.
         LSUIElement: true
     entitlements:
       path: MacHost/MacHost.entitlements

@@ -29,10 +29,11 @@ final class TestClipModel {
 }
 
 struct HostMenuView: View {
+    let session: HostSession
     @State private var clipModel = TestClipModel()
 
     var body: some View {
-        Text("Host idle")
+        HostingSection(session: session)
         Divider()
         TestClipSection(model: clipModel)
         Divider()

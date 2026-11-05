@@ -1,50 +1,32 @@
 import CoreMedia
 import Foundation
+import RemoteCore
 
-/// Pure helpers for converting VideoToolbox AVCC output into H.264 Annex B byte streams.
+/// MacHost-facing Annex B helpers. Byte-level conversions delegate to the shared
+/// `RemoteCore.AnnexB` (also used by the iOS client); this wrapper keeps the encoder's
+/// `H264EncoderError` contract and adds the CoreMedia parameter-set extraction.
 enum AnnexB {
-    static let startCode: [UInt8] = [0x00, 0x00, 0x00, 0x01]
-    private static let supportedLengthSizes: Set<Int> = [1, 2, 4]
+    static let startCode: [UInt8] = RemoteCore.AnnexB.startCode
 
     /// Converts AVCC data (each NAL prefixed by a big-endian length of `nalLengthSize` bytes)
     /// into Annex B (each NAL prefixed by `00 00 00 01`).
     static func fromAVCC(_ avcc: Data, nalLengthSize: Int) throws(H264EncoderError) -> Data {
-        guard supportedLengthSizes.contains(nalLengthSize) else { throw .malformedSampleData }
-        let bytes = [UInt8](avcc)
-        var output = Data(capacity: bytes.count + startCode.count * 4)
-        var offset = 0
-        while offset < bytes.count {
-            let nalStart = offset + nalLengthSize
-            guard nalStart <= bytes.count else { throw .malformedSampleData }
-            let length = bytes[offset..<nalStart].reduce(0) { ($0 << 8) | Int($1) }
-            let nalEnd = nalStart + length
-            guard length > 0, nalEnd <= bytes.count else { throw .malformedSampleData }
-            output.append(contentsOf: startCode)
-            output.append(contentsOf: bytes[nalStart..<nalEnd])
-            offset = nalEnd
+        do {
+            return try RemoteCore.AnnexB.fromAVCC(avcc, nalLengthSize: nalLengthSize)
+        } catch {
+            throw .malformedSampleData
         }
-        return output
     }
 
     /// Joins raw NAL units (e.g. SPS, PPS) into one Annex B stream.
     static func joined(_ nalUnits: [Data]) -> Data {
-        nalUnits.reduce(into: Data()) { stream, unit in
-            stream.append(contentsOf: startCode)
-            stream.append(unit)
-        }
+        RemoteCore.AnnexB.joined(nalUnits)
     }
 
-    /// Splits an Annex B stream that uses 4-byte start codes back into NAL units.
+    /// Splits an Annex B stream back into NAL units (3- or 4-byte start codes).
     /// Inverse of `joined`; intended for tests and diagnostics.
     static func nalUnits(in stream: Data) -> [Data] {
-        let bytes = [UInt8](stream)
-        let starts = stride(from: 0, to: max(bytes.count - startCode.count + 1, 0), by: 1)
-            .filter { Array(bytes[$0..<$0 + startCode.count]) == startCode }
-        return starts.enumerated().map { index, start in
-            let begin = start + startCode.count
-            let end = index + 1 < starts.count ? starts[index + 1] : bytes.count
-            return Data(bytes[begin..<end])
-        }
+        RemoteCore.AnnexB.nalUnits(in: stream)
     }
 
     /// Reads all H.264 parameter sets (SPS first, then PPS) and the AVCC NAL length size.

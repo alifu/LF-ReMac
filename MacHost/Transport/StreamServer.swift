@@ -18,7 +18,8 @@ enum StreamServerEvent: Equatable, Sendable {
 /// All mutable state lives on `queue`; public methods are safe to call from any thread.
 /// A newly connected client replaces the previous one. Phase 4 adds TLS and pairing on top of this.
 final class StreamServer: @unchecked Sendable {
-    static let bonjourServiceType = "_lfremac._tcp"
+    static let bonjourServiceType = NetworkDefaults.bonjourServiceType
+    static let defaultPort = NWEndpoint.Port(rawValue: NetworkDefaults.port) ?? .any
     private static let receiveChunkBytes = 64 * 1024
 
     let events: AsyncStream<StreamServerEvent>

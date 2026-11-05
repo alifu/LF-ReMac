@@ -29,7 +29,7 @@ final class HostSession {
 
     func start() {
         guard !isHosting else { return }
-        let server = StreamServer()
+        let server = StreamServer(port: StreamServer.defaultPort)
         do {
             try server.start()
         } catch {

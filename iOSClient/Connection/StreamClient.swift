@@ -31,6 +31,7 @@ final class StreamClient {
     @ObservationIgnored private let credentials: PhoneCredentials
     private let logger = AppLog.logger(category: "client")
     private var link: StreamLink?
+    @ObservationIgnored private var attempts = ConnectionAttempts(candidates: [])
 
     init(credentials: PhoneCredentials) {
         self.credentials = credentials
@@ -46,19 +47,43 @@ final class StreamClient {
         }
     }
 
-    /// Connects to `host` at `endpoint` (Bonjour service or last known address), pinning its key.
+    /// Connects to `host`, trying every Bonjour service with its name and then its last known
+    /// address until one presents the pinned key and accepts this iPhone.
+    func connect(to host: PairedHost, discovered: [DiscoveredHost]) {
+        connect(to: host, candidates: PairedHostTarget.candidates(for: host, discovered: discovered))
+    }
+
+    /// Connects to `host` at `endpoint`, falling back to its last known address, pinning its key.
     func connect(to endpoint: NWEndpoint, host: PairedHost) {
+        connect(to: host, candidates: PairedHostTarget.candidates(preferring: endpoint, for: host))
+    }
+
+    /// Tries `candidates` in order; a failed attempt (wrong key, unreachable, ...) moves on.
+    func connect(to host: PairedHost, candidates: [NWEndpoint]) {
         disconnect()
-        let name = host.name
-        state = .connecting(name)
+        state = .connecting(host.name)
+        let (step, attempts) = ConnectionAttempts(candidates: candidates).start()
+        self.attempts = attempts
+        perform(step, host: host)
+    }
+
+    private func perform(_ step: ConnectionAttempts.Step, host: PairedHost) {
+        switch step {
+        case .dial(let endpoint):
+            dial(endpoint, host: host)
+        case .giveUp(let message):
+            state = message.map { .failed($0) } ?? .idle
+        }
+    }
+
+    private func dial(_ endpoint: NWEndpoint, host: PairedHost) {
         renderer.reset()
         collector.reset()
-
         guard let link = makeLink(endpoint: endpoint, host: host) else { return }
         link.onStateChange = { [weak self, weak link] newState in
             Task { @MainActor in
                 guard let self, let link, self.link === link else { return }
-                self.apply(newState, name: name)
+                self.apply(newState, host: host)
             }
         }
         renderer.onKeyframeNeeded = { [weak link] in link?.send(Frame.keyframeRequest()) }
@@ -70,6 +95,7 @@ final class StreamClient {
     }
 
     func disconnect() {
+        attempts = ConnectionAttempts(candidates: [])
         stopStatsLoop()
         link?.close()
         link = nil
@@ -103,17 +129,34 @@ final class StreamClient {
         }
     }
 
-    private func apply(_ linkState: StreamLink.State, name: String) {
+    private func apply(_ linkState: StreamLink.State, host: PairedHost) {
         switch linkState {
-        case .connected:
-            state = .connected(name)
+        case .connected(let address):
+            attempts = ConnectionAttempts(candidates: [])
+            state = .connected(host.name)
             startStatsLoop()
-        case .closed(let reason):
+            remember(address, for: host)
+        case .closed(let summary):
             logger.info("Connection closed")
             stopStatsLoop()
             link = nil
             stats = .empty
-            state = reason.map { .failed($0) } ?? .idle
+            let (step, attempts) = attempts.next(after: summary)
+            self.attempts = attempts
+            if case .dial = step { logger.notice("Trying the paired Mac's next address") }
+            perform(step, host: host)
+        }
+    }
+
+    /// Saves where the (verified, accepting) Mac was reached, for the next connection.
+    private func remember(_ address: RemoteAddress, for host: PairedHost) {
+        guard let reachedHost = address.host, let reachedPort = address.port,
+              let current = credentials.hostStore.peer(with: host.fingerprint),
+              current.lastKnownHost != reachedHost || current.lastKnownPort != reachedPort else { return }
+        do {
+            try credentials.hostStore.add(current.reached(at: reachedHost, port: reachedPort))
+        } catch {
+            logger.error("Could not save the Mac's address: \(String(describing: error), privacy: .public)")
         }
     }
 

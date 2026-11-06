@@ -32,7 +32,9 @@ struct LinkHistory: Equatable, Sendable {
 enum LinkCloseClassifier {
     static let rejectionWindow: TimeInterval = 5
     static let notRecognised = "This Mac does not recognise this iPhone. Pair again."
-    static let wrongHostKey = "This Mac's security key does not match the paired Mac. Pair again."
+    /// Not "pair again": the real Mac was never reached, so re-pairing would not help (and could be
+    /// what an impersonator wants).
+    static let wrongHostKey = "A device answered as this Mac but its security key does not match. Your Mac was not reached."
 
     static func message(for cause: LinkCloseCause, history: LinkHistory) -> String? {
         if history.sawWrongHostKey { return wrongHostKey }

@@ -5,15 +5,20 @@ import RemoteCore
 
 /// One pinned mutual-TLS connection to a paired Mac. Everything except `onStateChange`
 /// assignment runs on its private queue. `.connected` is reported on the first frame from the Mac.
+///
+/// The key is checked twice: by the TLS verify block, and again at `.ready` against the verified
+/// peer certificate of this very connection (defence in depth: no frame is sent otherwise).
 final class StreamLink: @unchecked Sendable {
     enum State: Sendable {
-        case connected
-        case closed(reason: String?)
+        /// `address` is where the Mac was actually reached (nil if unknown).
+        case connected(address: RemoteAddress)
+        case closed(LinkCloseSummary)
     }
 
     var onStateChange: (@Sendable (State) -> Void)?
 
     private let connection: NWConnection
+    private let pinnedHost: DeviceFingerprint
     private let renderer: VideoRenderer
     private let collector: StatsCollector
     private let wrongHostKey: WrongHostKeyFlag
@@ -36,6 +41,7 @@ final class StreamLink: @unchecked Sendable {
             return isPinned
         }
         connection = NWConnection(to: endpoint, using: parameters)
+        self.pinnedHost = pinnedHost
         wrongHostKey = flag
         self.renderer = renderer
         self.collector = collector
@@ -65,6 +71,12 @@ final class StreamLink: @unchecked Sendable {
     private func handle(state: NWConnection.State, chunkBytes: Int) {
         switch state {
         case .ready:
+            guard TLSParameters.peerFingerprint(of: connection) == pinnedHost else {
+                logger.error("Connected peer does not present the paired Mac's key; closing")
+                wrongHostKey.set()
+                finish(.failed("Security key mismatch", isTLS: true))
+                return
+            }
             // TLS 1.3: `.ready` does not mean the Mac accepted our key yet. Ask for an echo and
             // report `.connected` only when the first frame arrives (only paired iPhones get one).
             readyAt = .now
@@ -115,7 +127,7 @@ final class StreamLink: @unchecked Sendable {
     private func route(_ frame: Frame) {
         if !history.receivedFrame {
             history.receivedFrame = true
-            onStateChange?(.connected)
+            onStateChange?(.connected(address: RemoteAddress(connection.currentPath?.remoteEndpoint)))
         }
         if frame.type == .ping {
             recordRoundTrip(sentAtMicros: frame.timestampMicros)
@@ -143,7 +155,11 @@ final class StreamLink: @unchecked Sendable {
         connection.cancel()
         history.sawWrongHostKey = wrongHostKey.isSet
         history.secondsAfterReady = readyAt.map { (ContinuousClock.now - $0).timeInterval }
-        onStateChange?(.closed(reason: LinkCloseClassifier.message(for: cause, history: history)))
+        onStateChange?(.closed(LinkCloseSummary(
+            message: LinkCloseClassifier.message(for: cause, history: history),
+            canTryAnotherAddress: cause != .local && !history.receivedFrame,
+            sawWrongHostKey: history.sawWrongHostKey
+        )))
     }
 }
 

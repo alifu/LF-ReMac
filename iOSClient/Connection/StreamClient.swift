@@ -105,6 +105,7 @@ final class StreamClient {
             Task { @MainActor in
                 guard let self, let link, self.link === link else { return }
                 self.displays = HostDisplays(info)
+                self.rememberWakeAddresses(info.wakeMACs, for: host)
             }
         }
         self.link = link
@@ -227,6 +228,18 @@ final class StreamClient {
         let (step, attempts) = ConnectionAttempts(candidates: candidates).start()
         self.attempts = attempts
         if case .dial(let endpoint) = step { dial(endpoint, host: host) } else { scheduleReconnect(host: host, fallback: step) }
+    }
+
+    /// Keeps the Mac's hardware addresses for Wake-on-LAN. A report with none never erases what is stored.
+    private func rememberWakeAddresses(_ reported: [String], for host: PairedHost) {
+        guard let current = credentials.hostStore.peer(with: host.fingerprint) else { return }
+        let updated = current.withWakeMACs(reported)
+        guard !updated.wakeAddresses.isEmpty, updated.wakeMACs != current.wakeMACs else { return }
+        do {
+            try credentials.hostStore.add(updated)
+        } catch {
+            logger.error("Could not save the Mac's wake addresses: \(String(describing: error), privacy: .public)")
+        }
     }
 
     /// Saves where the (verified, accepting) Mac was reached, for the next connection.

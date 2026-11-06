@@ -14,6 +14,7 @@ struct ConnectionView: View {
     @State private var hostPendingForget: PairedHost?
     @State private var forgetError: String?
     @State private var hostPendingAddress: PairedHost?
+    @State private var wakeNotice: WakeNotice?
 
     init(credentials: PhoneCredentials) {
         self.credentials = credentials
@@ -28,6 +29,7 @@ struct ConnectionView: View {
                 hostPicker
             }
         }
+        .onChange(of: client.state) { _, _ in reloadPairedHosts() }
         .task {
             reloadPairedHosts()
             browser.start()
@@ -138,12 +140,24 @@ struct ConnectionView: View {
             Text("Key \(host.fingerprint.verificationCode)")
                 .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(.secondary)
+            if !host.wakeAddresses.isEmpty {
+                Button("Wake \(host.name)", systemImage: "power") { wake(host) }
+                    .font(.callout)
+                    .buttonStyle(.borderless)
+            }
+            if let wakeNotice, wakeNotice.fingerprint == host.fingerprint {
+                Text(wakeNotice.message).font(.caption).foregroundStyle(.secondary)
+            }
             if let savedHost = host.savedHost, let savedPort = host.savedPort {
                 Text("Saved: \(savedHost):\(savedPort)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private func wake(_ host: PairedHost) {
+        wakeNotice = WakeNotice(fingerprint: host.fingerprint, message: WakeService.live.wake(host).message)
     }
 
     private var isEditingAddress: Binding<Bool> {
@@ -185,6 +199,11 @@ struct ConnectionView: View {
         pairedHosts = credentials.hostStore.all().sorted { $0.name < $1.name }
         pairedHostsIssue = credentials.pairedHostsIssue
     }
+}
+
+private struct WakeNotice: Equatable {
+    let fingerprint: DeviceFingerprint
+    let message: String
 }
 
 /// Owns the pairing model for the lifetime of one presented sheet.

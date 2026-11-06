@@ -279,7 +279,9 @@ final class HostSession {
 
     private func sendHostInfo() {
         guard peerCapabilities.canReceive(.hostInfo) else { return }
-        server?.sendHostInfo(DisplayCatalog.hostInfo(displays: environment.displays(), selectedUUID: requestedDisplayUUID))
+        server?.sendHostInfo(DisplayCatalog.hostInfo(
+            displays: environment.displays(), selectedUUID: requestedDisplayUUID, wakeMACs: environment.wakeMACs()
+        ))
     }
 
     /// The iPhone picked a display. Unknown UUIDs (a display that just went away) are ignored.

@@ -28,6 +28,8 @@ struct HostEnvironment: Sendable {
     var acquirePowerAssertion: PowerManager.Acquire = { _ in nil }
     /// Current displays. Empty by default so tests never touch real screens (the pipeline then uses the main display).
     var displays: @Sendable () -> [DisplayDescriptor] = { [] }
+    /// Hardware addresses reported for Wake-on-LAN. Empty by default so tests never read the real network.
+    var wakeMACs: @Sendable () -> [String] = { [] }
 
     static let live = HostEnvironment(
         loadIdentity: { name in try DeviceIdentity.loadOrCreate(deviceName: name) },
@@ -40,7 +42,8 @@ struct HostEnvironment: Sendable {
         limits: .standard,
         settings: UserDefaults.standard,
         acquirePowerAssertion: PowerManager.systemAcquire,
-        displays: { SystemDisplays.current() }
+        displays: { SystemDisplays.current() },
+        wakeMACs: { HardwareAddresses.current() }
     )
 }
 

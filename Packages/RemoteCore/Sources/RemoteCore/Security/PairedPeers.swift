@@ -32,6 +32,11 @@ public struct PairedHost: PinnedPeer {
     public let lastKnownPort: UInt16?
     public let savedHost: String?
     public let savedPort: UInt16?
+    /// Hardware addresses the Mac reported for Wake-on-LAN (optional so older JSON still decodes).
+    public let wakeMACs: [String]?
+
+    /// The stored addresses that are valid, as typed values.
+    public var wakeAddresses: [MACAddress] { (wakeMACs ?? []).compactMap(MACAddress.init) }
 
     public init(
         name: String,
@@ -40,7 +45,8 @@ public struct PairedHost: PinnedPeer {
         lastKnownHost: String?,
         lastKnownPort: UInt16?,
         savedHost: String? = nil,
-        savedPort: UInt16? = nil
+        savedPort: UInt16? = nil,
+        wakeMACs: [String]? = nil
     ) {
         self.name = name
         self.fingerprint = fingerprint
@@ -49,6 +55,7 @@ public struct PairedHost: PinnedPeer {
         self.lastKnownPort = lastKnownPort
         self.savedHost = savedHost
         self.savedPort = savedPort
+        self.wakeMACs = wakeMACs
     }
 
     /// Copy with an updated last-known address (the fingerprint, i.e. the identity, never changes).
@@ -56,7 +63,7 @@ public struct PairedHost: PinnedPeer {
         PairedHost(
             name: name, fingerprint: fingerprint, pairedAt: pairedAt,
             lastKnownHost: host, lastKnownPort: port,
-            savedHost: savedHost, savedPort: savedPort
+            savedHost: savedHost, savedPort: savedPort, wakeMACs: wakeMACs
         )
     }
 
@@ -65,7 +72,18 @@ public struct PairedHost: PinnedPeer {
         PairedHost(
             name: name, fingerprint: fingerprint, pairedAt: pairedAt,
             lastKnownHost: lastKnownHost, lastKnownPort: lastKnownPort,
-            savedHost: host, savedPort: port
+            savedHost: host, savedPort: port, wakeMACs: wakeMACs
+        )
+    }
+
+    /// Copy with the Mac's reported hardware addresses (normalised; invalid ones are dropped).
+    public func withWakeMACs(_ addresses: [String]) -> PairedHost {
+        var seen = Set<MACAddress>()
+        let valid = addresses.compactMap(MACAddress.init).filter { seen.insert($0).inserted }.map(\.description)
+        return PairedHost(
+            name: name, fingerprint: fingerprint, pairedAt: pairedAt,
+            lastKnownHost: lastKnownHost, lastKnownPort: lastKnownPort,
+            savedHost: savedHost, savedPort: savedPort, wakeMACs: valid
         )
     }
 }

@@ -100,4 +100,46 @@ struct ClientSendGateTests {
 
         #expect(gate.pendingSends == 0)
     }
+
+    // MARK: Audio
+
+    private func audio() -> Frame {
+        Frame(type: .audioFrame, timestampMicros: 3, payload: Data([4]))
+    }
+
+    @Test func audioIsSentWithoutWaitingForVideoToStart() {
+        var gate = ClientSendGate()
+
+        #expect(gate.decide(for: Frame(type: .audioConfig, timestampMicros: 0, payload: Data([1]))) == .send)
+        #expect(gate.decide(for: audio()) == .send)
+    }
+
+    @Test func audioKeepsFlowingWhileVideoIsBeingDropped() {
+        var gate = ClientSendGate(maxPendingFrames: 2)
+        _ = gate.decide(for: config())
+        _ = gate.decide(for: keyframe())
+
+        #expect(gate.decide(for: deltaFrame()) == .dropAndRequestKeyframe)  // video backlog is at its limit
+        #expect(gate.decide(for: audio()) == .send)
+    }
+
+    @Test func staleAudioIsDroppedOnceTheBacklogIsDeep() {
+        var gate = ClientSendGate()
+        for _ in 0..<ClientSendGate.defaultMaxPendingAudioFrames { _ = gate.decide(for: audio()) }
+
+        #expect(gate.decide(for: audio()) == .drop)
+
+        gate.sendCompleted()
+        #expect(gate.decide(for: audio()) == .send)
+    }
+
+    @Test func droppedAudioDoesNotCountAsPending() {
+        var gate = ClientSendGate()
+        for _ in 0..<ClientSendGate.defaultMaxPendingAudioFrames { _ = gate.decide(for: audio()) }
+        let before = gate.pendingSends
+
+        _ = gate.decide(for: audio())
+
+        #expect(gate.pendingSends == before)
+    }
 }

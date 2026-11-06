@@ -5,12 +5,12 @@ import Foundation
 public enum ProtocolTypes {
     /// What the Mac accepts from its paired iPhone.
     public static let hostAcceptsFromPairedClient: Set<MessageType> = [
-        .keyframeRequest, .input, .ping, .clientHello, .selectDisplay,
+        .keyframeRequest, .input, .ping, .clientHello, .selectDisplay, .audioControl,
     ]
 
     /// What the iPhone accepts from the Mac.
     public static let clientAcceptsFromHost: Set<MessageType> = [
-        .videoConfig, .videoFrame, .ping, .pairResponse, .hostInfo,
+        .videoConfig, .videoFrame, .ping, .pairResponse, .hostInfo, .audioConfig, .audioFrame,
     ]
 }
 
@@ -38,7 +38,9 @@ public struct PeerCapabilities: Equatable, Sendable {
             true
         case .hostInfo:
             capabilities.contains(.displays)
-        case .keyframeRequest, .input, .pairRequest, .clientHello, .selectDisplay:
+        case .audioConfig, .audioFrame:
+            capabilities.contains(.audio)
+        case .keyframeRequest, .input, .pairRequest, .clientHello, .selectDisplay, .audioControl:
             false
         }
     }

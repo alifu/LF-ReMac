@@ -17,6 +17,11 @@ public enum SessionMessageCoding {
     public static let maxNameLength = 64
     public static let maxPixelSize = 16_384
     public static let maxProtocolVersion = 100
+    /// AAC-LC at 96 kbps is about 280 bytes per frame; this leaves plenty of room for loud peaks.
+    public static let maxAudioFrameBytes = 8 * 1024
+    public static let maxAudioSetupBytes = 64
+    public static let audioSampleRates: Set<Int> = [44_100, 48_000]
+    public static let audioFrameSizes: Set<Int> = [960, 1024]
 
     // MARK: Frames
 
@@ -32,7 +37,43 @@ public enum SessionMessageCoding {
         Frame(type: .selectDisplay, timestampMicros: timestampMicros, payload: try encode(selection))
     }
 
+    public static func frame(for config: AudioConfig, timestampMicros: UInt64) throws(SessionMessageError) -> Frame {
+        Frame(type: .audioConfig, timestampMicros: timestampMicros, payload: try encode(config))
+    }
+
+    public static func frame(for control: AudioControl, timestampMicros: UInt64) throws(SessionMessageError) -> Frame {
+        Frame(type: .audioControl, timestampMicros: timestampMicros, payload: try encode(control))
+    }
+
+    /// The payload of an audio frame is the raw access unit, not JSON.
+    public static func audioFrame(aac: Data, timestampMicros: UInt64) throws(SessionMessageError) -> Frame {
+        guard !aac.isEmpty else { throw .invalidField }
+        guard aac.count <= maxAudioFrameBytes else { throw .payloadTooLarge(aac.count) }
+        return Frame(type: .audioFrame, timestampMicros: timestampMicros, payload: aac)
+    }
+
     // MARK: Decoding
+
+    public static func audioConfig(from frame: Frame) throws(SessionMessageError) -> AudioConfig {
+        let config: AudioConfig = try decode(frame, expecting: .audioConfig, maxBytes: maxSmallMessageBytes)
+        guard audioSampleRates.contains(config.sampleRate),
+              (1...2).contains(config.channels),
+              audioFrameSizes.contains(config.frameSamples),
+              (1...maxAudioSetupBytes).contains(config.audioSpecificConfig.count)
+        else { throw .invalidField }
+        return config
+    }
+
+    public static func audioControl(from frame: Frame) throws(SessionMessageError) -> AudioControl {
+        try decode(frame, expecting: .audioControl, maxBytes: maxSmallMessageBytes)
+    }
+
+    public static func audioAccessUnit(from frame: Frame) throws(SessionMessageError) -> Data {
+        guard frame.type == .audioFrame else { throw .wrongMessageType }
+        guard frame.payload.count <= maxAudioFrameBytes else { throw .payloadTooLarge(frame.payload.count) }
+        guard !frame.payload.isEmpty else { throw .invalidField }
+        return frame.payload
+    }
 
     public static func clientHello(from frame: Frame) throws(SessionMessageError) -> ClientHello {
         let hello: ClientHello = try decode(frame, expecting: .clientHello, maxBytes: maxSmallMessageBytes)

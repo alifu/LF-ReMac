@@ -18,7 +18,9 @@ extension StreamServer {
             handleHello(frame, from: session)
         case .selectDisplay:
             handleSelectDisplay(frame)
-        case .videoConfig, .videoFrame, .hostInfo, .pairRequest, .pairResponse:
+        case .audioControl:
+            break // Handled in Phase 7.7 (audio capture)
+        case .videoConfig, .videoFrame, .hostInfo, .audioConfig, .audioFrame, .pairRequest, .pairResponse:
             break
         }
     }

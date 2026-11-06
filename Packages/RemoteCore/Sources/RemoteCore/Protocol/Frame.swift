@@ -12,6 +12,9 @@ public enum MessageType: UInt8, Sendable, CaseIterable {
     case clientHello = 8      // iPhone -> Mac: protocol version + capabilities (Phase 7)
     case hostInfo = 9         // Mac -> iPhone: displays, wake MACs; only after a hello that asked for it
     case selectDisplay = 10   // iPhone -> Mac: choose which display to stream
+    case audioConfig = 11     // Mac -> iPhone: audio format (AAC-LC); only after a hello that asked for audio
+    case audioFrame = 12      // Mac -> iPhone: one AAC access unit
+    case audioControl = 13    // iPhone -> Mac: switch audio on or off
 }
 
 /// Per-frame flags (bit set).

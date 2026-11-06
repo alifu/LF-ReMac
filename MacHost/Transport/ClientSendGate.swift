@@ -23,6 +23,10 @@ struct ClientSendGate: Sendable {
     /// About 270 ms of video at 30 fps.
     static let defaultMaxPendingFrames = 8
 
+    /// About 500 ms of audio at 47 frames a second. Audio is tiny, so it is allowed to queue deeper than
+    /// video: a short gap is worse than slightly late audio, but a long backlog is stale and is dropped.
+    static let defaultMaxPendingAudioFrames = 24
+
     private let maxPendingFrames: Int
     private var isWaitingForKeyframe = true
     private var hasSeenConfig = false
@@ -37,7 +41,10 @@ struct ClientSendGate: Sendable {
         switch frame.type {
         case .videoConfig, .videoFrame:
             return decideVideo(frame)
-        case .keyframeRequest, .input, .ping, .pairRequest, .pairResponse, .clientHello, .hostInfo, .selectDisplay:
+        case .audioFrame:
+            return decideAudio()
+        case .keyframeRequest, .input, .ping, .pairRequest, .pairResponse, .clientHello, .hostInfo, .selectDisplay,
+             .audioConfig, .audioControl:
             return enqueue()
         }
     }
@@ -45,6 +52,10 @@ struct ClientSendGate: Sendable {
     /// Call when the network layer has taken ownership of a frame that was approved with `.send`.
     mutating func sendCompleted() {
         pendingSends = max(0, pendingSends - 1)
+    }
+
+    private mutating func decideAudio() -> Decision {
+        pendingSends >= Self.defaultMaxPendingAudioFrames ? .drop : enqueue()
     }
 
     private mutating func decideVideo(_ frame: Frame) -> Decision {

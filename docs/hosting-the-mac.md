@@ -25,6 +25,42 @@ LF-ReMac only works while the Mac is awake, on a network the iPhone can reach, a
 4. **FileVault**: after a reboot the Mac stops at the disk-unlock screen before the app can start, so
    it cannot be reached remotely until someone unlocks it once.
 
+## Waking a sleeping Mac (Wake-on-LAN)
+The iPhone can wake a sleeping Mac with the **Wake** button on the Mac's entry in the iPhone app.
+- **Setup on the Mac:** turn on "Wake for network access" (see *Mac settings to check*). An Ethernet
+  connection is the most reliable; Wi-Fi wake depends on the Mac model.
+- **Learn the Mac once:** connect to the Mac from the iPhone while it is awake. The Mac tells the iPhone
+  its hardware (MAC) addresses, and the iPhone saves them with the pairing. Without that the button
+  says to connect once first.
+- **Same network only:** the wake signal is a broadcast on the Wi-Fi network the iPhone is on. It cannot
+  cross Tailscale or the internet. The Mac can take several seconds to wake; then connect as usual.
+- Checked on a real iPhone that the signal can be sent from a free developer account. Waking an actual
+  sleeping Mac mini is still to be confirmed on your own network.
+
+## Headless Mac mini (no monitor)
+With no display attached macOS may give a missing or tiny screen, and apps that need a display behave
+badly. Plug an **HDMI (or DisplayPort/USB-C) dummy plug** into the Mac mini: it makes macOS see a
+normal monitor, so the stream has a proper full-size picture. A built-in virtual display was tried
+and rejected: it relies on a private macOS API and could not be re-created reliably while the app keeps
+running (see the Phase 7 notes in the plan).
+
+## Choosing a display
+If the Mac has more than one display, a display button appears in the stream toolbar on the iPhone.
+The choice is remembered per iPhone. If the chosen display is unplugged, the stream falls back to the
+main display and returns when it is plugged in again.
+
+## Sound
+Sound from the Mac is **off by default**. Tap the speaker button in the stream toolbar to turn it on;
+the choice is remembered for each Mac. It plays what the Mac plays (not the Mac's microphone), without
+this app's own sounds. Audio is sent only while it is on, so muting saves CPU and data.
+- It is kept close to the picture on purpose (about 40 ms buffered); on a poor connection you may hear
+  short gaps instead of a growing delay.
+- Update the **Mac app first**, then the iPhone app: an older Mac app drops the connection when it gets
+  the newer iPhone's greeting.
+- On a Mac mini with no speakers or monitor audio, the dummy plug above also gives macOS an output
+  device. Whether sound is captured with no output device at all is not yet confirmed; if the speaker
+  button gives silence, try the dummy plug.
+
 ## Start at login
 Add the app in **System Settings → General → Login Items** ("Open at Login"), then open it once and
 choose **Start Hosting**. Hosting does not start by itself, by design.

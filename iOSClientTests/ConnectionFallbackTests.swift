@@ -8,8 +8,16 @@ import Testing
 private let fingerprint = (try? DeviceFingerprint(bytes: Data(repeating: 1, count: 32)))
     ?? { preconditionFailure("fixture fingerprint") }()
 
-private func pairedHost(address: String? = "10.0.0.2", port: UInt16? = 47800) -> PairedHost {
-    PairedHost(name: "Mac mini", fingerprint: fingerprint, pairedAt: Date(), lastKnownHost: address, lastKnownPort: port)
+private func pairedHost(
+    address: String? = "10.0.0.2",
+    port: UInt16? = 47800,
+    saved: String? = nil,
+    savedPort: UInt16? = nil
+) -> PairedHost {
+    PairedHost(
+        name: "Mac mini", fingerprint: fingerprint, pairedAt: Date(),
+        lastKnownHost: address, lastKnownPort: port, savedHost: saved, savedPort: savedPort
+    )
 }
 
 private func service(_ interface: String) -> NWEndpoint {
@@ -35,6 +43,36 @@ struct PairedHostCandidatesTests {
         #expect(PairedHostTarget.candidates(preferring: service("a"), for: pairedHost()) == [service("a"), lastKnown])
         #expect(PairedHostTarget.candidates(preferring: lastKnown, for: pairedHost()) == [lastKnown])
         #expect(PairedHostTarget.candidates(for: pairedHost(address: nil), discovered: []).isEmpty)
+    }
+
+    @Test func servicesThenSavedAddressThenLastKnownAddress() {
+        let saved = NWEndpoint.hostPort(host: "mac-mini.tail1234.ts.net", port: 47801)
+        let discovered = [DiscoveredHost(name: "Mac mini", endpoint: service("a"))]
+        let host = pairedHost(saved: "mac-mini.tail1234.ts.net", savedPort: 47801)
+
+        #expect(PairedHostTarget.candidates(for: host, discovered: discovered) == [service("a"), saved, .hostPort(host: "10.0.0.2", port: 47800)])
+    }
+
+    @Test func savedAddressIsTheOnlyCandidateWhenBonjourFindsNothing() {
+        let saved = NWEndpoint.hostPort(host: "100.101.102.103", port: 47800)
+        let host = pairedHost(address: nil, port: nil, saved: "100.101.102.103", savedPort: 47800)
+
+        #expect(PairedHostTarget.candidates(for: host, discovered: []) == [saved])
+        #expect(PairedHostTarget.endpoint(for: host, discovered: []) == saved)
+    }
+
+    @Test func savedAddressIsNotRepeatedWhenItMatchesTheLastKnownAddress() {
+        let host = pairedHost(saved: "10.0.0.2", savedPort: 47800)
+
+        #expect(PairedHostTarget.candidates(for: host, discovered: []) == [.hostPort(host: "10.0.0.2", port: 47800)])
+    }
+
+    @Test func preferredThenSavedThenLastKnown() {
+        let saved = NWEndpoint.hostPort(host: "100.101.102.103", port: 47800)
+        let lastKnown = NWEndpoint.hostPort(host: "10.0.0.2", port: 47800)
+        let host = pairedHost(saved: "100.101.102.103", savedPort: 47800)
+
+        #expect(PairedHostTarget.candidates(preferring: service("a"), for: host) == [service("a"), saved, lastKnown])
     }
 }
 

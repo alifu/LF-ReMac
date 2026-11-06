@@ -13,6 +13,7 @@ struct ConnectionView: View {
     @State private var pairingRequest: PairingRequest?
     @State private var hostPendingForget: PairedHost?
     @State private var forgetError: String?
+    @State private var hostPendingAddress: PairedHost?
 
     init(credentials: PhoneCredentials) {
         self.credentials = credentials
@@ -38,6 +39,14 @@ struct ConnectionView: View {
             Button("Reset and Forget All Macs", role: .destructive) { resetPairedHosts() }
         } message: {
             Text("The damaged list is erased. You must pair each Mac again.")
+        }
+        .sheet(isPresented: isEditingAddress) {
+            if let host = hostPendingAddress {
+                SavedAddressSheet(credentials: credentials, host: host) {
+                    hostPendingAddress = nil
+                    reloadPairedHosts()
+                }
+            }
         }
         .sheet(item: $pairingRequest) { request in
             PairingSheet(
@@ -97,6 +106,8 @@ struct ConnectionView: View {
             ForEach(pairedHosts, id: \.fingerprint) { host in
                 pairedRow(host)
                     .swipeActions {
+                        Button("Set Address…") { hostPendingAddress = host }
+                            .tint(.blue)
                         Button("Forget", role: .destructive) { hostPendingForget = host }
                     }
             }
@@ -127,7 +138,16 @@ struct ConnectionView: View {
             Text("Key \(host.fingerprint.verificationCode)")
                 .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(.secondary)
+            if let savedHost = host.savedHost, let savedPort = host.savedPort {
+                Text("Saved: \(savedHost):\(savedPort)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
+    }
+
+    private var isEditingAddress: Binding<Bool> {
+        Binding(get: { hostPendingAddress != nil }, set: { if !$0 { hostPendingAddress = nil } })
     }
 
     private func forget(_ host: PairedHost) {

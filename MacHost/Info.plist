@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>LF-ReMacHost</string>
+	<string>LF-ReMac</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -23,6 +23,6 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>LF-ReMacHost streams your screen to your paired iPhone.</string>
+	<string>LF-ReMac streams your screen to your paired iPhone.</string>
 </dict>
 </plist>

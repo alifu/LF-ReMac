@@ -59,6 +59,7 @@ targets:
         UILaunchScreen: {}
         NSLocalNetworkUsageDescription: LF-ReMac finds and connects to your Mac on the local network.
         NSBonjourServices: [_lfremac._tcp]
+        NSCameraUsageDescription: LF-ReMac scans the pairing code shown on your Mac.
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft

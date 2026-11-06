@@ -3,15 +3,12 @@ import RemoteCore
 import SwiftUI
 
 /// Entry screen: connect to a paired Mac (pinned TLS), then show the stream.
-/// Pairing UI arrives in task 4.5; until then unpaired Macs only show a placeholder notice.
 struct ConnectionView: View {
-    private static let pairingComingSoon = "Pairing screen coming soon."
-
     private let credentials: PhoneCredentials
     @State private var client: StreamClient
     @State private var browser = HostBrowser()
     @State private var pairedHosts: [PairedHost] = []
-    @State private var notice: String?
+    @State private var pairingRequest: PairingRequest?
 
     init(credentials: PhoneCredentials) {
         self.credentials = credentials
@@ -33,6 +30,16 @@ struct ConnectionView: View {
         .onDisappear {
             browser.stop()
         }
+        .sheet(item: $pairingRequest) { request in
+            PairingSheet(
+                credentials: credentials,
+                discovered: browser.hosts,
+                request: request
+            ) {
+                pairingRequest = nil
+                reloadPairedHosts()
+            }
+        }
     }
 
     private var hostPicker: some View {
@@ -41,7 +48,6 @@ struct ConnectionView: View {
                 statusSection
                 pairedSection
                 discoveredSection
-                ManualAddressSection { notice = Self.pairingComingSoon }
             }
             .navigationTitle("LF-ReMac")
             .refreshable { reloadPairedHosts() }
@@ -58,15 +64,15 @@ struct ConnectionView: View {
         case .idle, .connected:
             EmptyView()
         }
-        if let notice {
-            Section { Label(notice, systemImage: "info.circle") }
-        }
     }
 
     private var pairedSection: some View {
         Section("Paired Macs") {
             if pairedHosts.isEmpty {
                 Text("No paired Mac yet.").foregroundStyle(.secondary)
+            }
+            Button("Pair New Mac…", systemImage: "qrcode.viewfinder") {
+                pairingRequest = PairingRequest(mode: .scan)
             }
             ForEach(pairedHosts, id: \.fingerprint) { host in
                 if let endpoint = PairedHostTarget.endpoint(for: host, discovered: browser.hosts) {
@@ -86,7 +92,9 @@ struct ConnectionView: View {
                     .foregroundStyle(.secondary)
             }
             ForEach(unpaired) { host in
-                Button("Pair with \(host.name)") { notice = Self.pairingComingSoon }
+                Button("Pair with \(host.name)") {
+                    pairingRequest = PairingRequest(mode: .type, preselectedHostName: host.name)
+                }
             }
         }
     }
@@ -96,22 +104,22 @@ struct ConnectionView: View {
     }
 }
 
-private struct ManualAddressSection: View {
-    let onPair: () -> Void
-    @State private var host = ""
-    @State private var portText = String(NetworkDefaults.port)
+/// Owns the pairing model for the lifetime of one presented sheet.
+private struct PairingSheet: View {
+    let discovered: [DiscoveredHost]
+    let request: PairingRequest
+    let onFinished: () -> Void
+    @State private var model: PairingModel
+
+    init(credentials: PhoneCredentials, discovered: [DiscoveredHost], request: PairingRequest, onFinished: @escaping () -> Void) {
+        self.discovered = discovered
+        self.request = request
+        self.onFinished = onFinished
+        _model = State(initialValue: PairingModel(service: PairingService(credentials: credentials)))
+    }
 
     var body: some View {
-        Section("Pair by address") {
-            TextField("Host or IP (e.g. 192.168.1.20)", text: $host)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .keyboardType(.URL)
-            TextField("Port", text: $portText)
-                .keyboardType(.numberPad)
-            Button("Pair", action: onPair)
-                .disabled(host.trimmingCharacters(in: .whitespaces).isEmpty)
-        }
+        PairingFlowView(model: model, discovered: discovered, request: request, onFinished: onFinished)
     }
 }
 

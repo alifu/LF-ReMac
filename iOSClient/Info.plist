@@ -24,6 +24,8 @@
 	<array>
 		<string>_lfremac._tcp</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>LF-ReMac scans the pairing code shown on your Mac.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>LF-ReMac finds and connects to your Mac on the local network.</string>
 	<key>UILaunchScreen</key>

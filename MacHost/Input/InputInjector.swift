@@ -7,6 +7,7 @@ import RemoteCore
 final class InputInjector {
     private let logger = AppLog.logger(category: "input")
     private var translator: EventTranslator
+    private var displayID: CGDirectDisplayID = CGMainDisplayID()
 
     init() {
         translator = EventTranslator(
@@ -15,8 +16,13 @@ final class InputInjector {
         )
     }
 
+    /// Maps pointer positions onto this display; nil means the main display.
+    func setDisplay(_ id: CGDirectDisplayID?) {
+        displayID = id ?? CGMainDisplayID()
+    }
+
     func inject(_ event: InputEvent) {
-        translator.displayBounds = CGDisplayBounds(CGMainDisplayID())
+        translator.displayBounds = CGDisplayBounds(displayID)
         post(translator.events(for: event))
     }
 

@@ -12,6 +12,10 @@ enum StreamServerEvent: Equatable, Sendable {
     case clientDisconnected(DeviceFingerprint)
     /// A validated input event from the active, paired session. Acting on it is the host's decision.
     case input(InputEvent)
+    /// The active client's hello: what it can handle beyond the Phase 1-6 protocol.
+    case clientHello(PeerCapabilities)
+    /// The active client asked to stream this display (a validated display UUID; may no longer exist).
+    case displaySelected(String)
     /// The encoder should emit a fresh keyframe (new client, client request, or client fell behind).
     case keyframeNeeded
     /// The active client's connection is backed up; the encoder should lower its bitrate.

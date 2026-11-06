@@ -14,8 +14,10 @@ extension StreamServer {
             if session.gate.decide(for: frame) == .send { send(frame, on: session) }
         case .input:
             forwardInput(frame)
-        case .clientHello, .selectDisplay:
-            break // Handled in Phase 7.2 (display selection)
+        case .clientHello:
+            handleHello(frame, from: session)
+        case .selectDisplay:
+            handleSelectDisplay(frame)
         case .videoConfig, .videoFrame, .hostInfo, .pairRequest, .pairResponse:
             break
         }
@@ -66,6 +68,38 @@ extension StreamServer {
                 }
             }
         )
+    }
+
+    private func handleHello(_ frame: Frame, from session: PeerConnection) {
+        do {
+            let capabilities = PeerCapabilities(hello: try SessionMessageCoding.clientHello(from: frame))
+            session.capabilities = capabilities
+            continuation.yield(.clientHello(capabilities))
+        } catch {
+            logger.error("Dropped invalid hello: \(String(describing: error), privacy: .public)")
+            session.cancel()
+        }
+    }
+
+    private func handleSelectDisplay(_ frame: Frame) {
+        do {
+            continuation.yield(.displaySelected(try SessionMessageCoding.selectDisplay(from: frame).displayID))
+        } catch {
+            logger.error("Dropped invalid display selection: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// Tells the active client about the displays, if (and only if) its hello asked for them.
+    func sendHostInfo(_ info: HostInfo) {
+        queue.async {
+            guard let session = self.active, session.capabilities.canReceive(.hostInfo) else { return }
+            do {
+                let frame = try SessionMessageCoding.frame(for: info, timestampMicros: 0)
+                if session.gate.decide(for: frame) == .send { self.send(frame, on: session) }
+            } catch {
+                self.logger.error("Could not encode host info: \(String(describing: error), privacy: .public)")
+            }
+        }
     }
 
     private func forwardInput(_ frame: Frame) {

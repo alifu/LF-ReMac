@@ -46,6 +46,13 @@ final class HostSession {
     @ObservationIgnored private var pairingExpiry: Task<Void, Never>?
     @ObservationIgnored private var listeningPort: UInt16 = 0
     @ObservationIgnored private var hasWarnedAboutAccessibility = false
+    @ObservationIgnored private var peerCapabilities = PeerCapabilities.legacy
+    /// UUID the connected iPhone asked for (or had last time); the display actually streamed may differ after fallback.
+    @ObservationIgnored private var requestedDisplayUUID: String?
+    @ObservationIgnored private var streamedDisplay: DisplayDescriptor?
+    @ObservationIgnored private lazy var displayWatcher = DisplayWatcher { [weak self] in
+        Task { await self?.displaysChanged() }
+    }
 
     init(environment: HostEnvironment = .live) {
         self.environment = environment
@@ -117,6 +124,7 @@ final class HostSession {
         injector.releaseAll()
         server?.stop()
         eventLoop?.cancel()
+        displayWatcher.stop()
         await stopPipeline()
         server = nil
         coordinator = nil
@@ -230,8 +238,18 @@ final class HostSession {
         case .clientConnected(let fingerprint):
             connectedDeviceName = store.peer(with: fingerprint)?.name
             connectedDeviceFingerprint = fingerprint
+            peerCapabilities = .legacy
+            requestedDisplayUUID = environment.settings.string(forKey: HostEnvironment.selectedDisplayKey(for: fingerprint))
+            displayWatcher.start()
             await startPipeline()
+        case .clientHello(let capabilities):
+            peerCapabilities = capabilities
+            sendHostInfo()
+        case .displaySelected(let uuid):
+            await selectDisplay(uuid)
         case .clientDisconnected:
+            displayWatcher.stop()
+            peerCapabilities = .legacy
             injector.releaseAll()
             connectedDeviceName = nil
             connectedDeviceFingerprint = nil
@@ -255,6 +273,38 @@ final class HostSession {
             await stopPipeline()
             state = .failed(message)
         }
+    }
+
+    // MARK: - Displays
+
+    private func sendHostInfo() {
+        guard peerCapabilities.canReceive(.hostInfo) else { return }
+        server?.sendHostInfo(DisplayCatalog.hostInfo(displays: environment.displays(), selectedUUID: requestedDisplayUUID))
+    }
+
+    /// The iPhone picked a display. Unknown UUIDs (a display that just went away) are ignored.
+    private func selectDisplay(_ uuid: String) async {
+        let displays = environment.displays()
+        guard displays.contains(where: { $0.uuid == uuid }), pipeline != nil else { return }
+        requestedDisplayUUID = uuid
+        if let fingerprint = connectedDeviceFingerprint {
+            environment.settings.set(uuid, forKey: HostEnvironment.selectedDisplayKey(for: fingerprint))
+        }
+        await restartPipelineIfDisplayChanged(in: displays)
+        sendHostInfo()
+    }
+
+    /// A display was added, removed or resized: fall back if the streamed one is gone, then refresh the iPhone.
+    private func displaysChanged() async {
+        guard pipeline != nil else { return }
+        await restartPipelineIfDisplayChanged(in: environment.displays())
+        sendHostInfo()
+    }
+
+    private func restartPipelineIfDisplayChanged(in displays: [DisplayDescriptor]) async {
+        let target = DisplayCatalog.resolve(requestedDisplayUUID, in: displays)
+        guard DisplayCatalog.needsRestart(from: streamedDisplay, to: target) else { return }
+        await startPipeline()
     }
 
     private func handleInput(_ input: InputEvent) {
@@ -287,9 +337,12 @@ final class HostSession {
         guard let server else { return }
         await stopPipeline()
         let pipeline = StreamingPipeline()
+        let target = DisplayCatalog.resolve(requestedDisplayUUID, in: environment.displays())
         do {
-            try await pipeline.start { event in server.broadcast(event.asFrame) }
+            try await pipeline.start(displayID: target?.displayID) { event in server.broadcast(event.asFrame) }
             self.pipeline = pipeline
+            streamedDisplay = target
+            injector.setDisplay(target?.displayID)
             state = .streaming
         } catch {
             logger.error("Could not start streaming: \(error.localizedDescription, privacy: .public)")
@@ -300,6 +353,7 @@ final class HostSession {
     private func stopPipeline() async {
         guard let pipeline else { return }
         self.pipeline = nil
+        streamedDisplay = nil
         await pipeline.stop()
     }
 }

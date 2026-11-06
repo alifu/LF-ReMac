@@ -45,7 +45,9 @@ final class ScreenCapturer {
         CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess()
     }
 
+    /// - Parameter displayID: the display to capture; nil (or one that is gone) means the main display.
     func start(
+        displayID: CGDirectDisplayID? = nil,
         settings: CaptureSettings = .default,
         onFrame: @escaping FrameHandler
     ) async throws {
@@ -53,12 +55,13 @@ final class ScreenCapturer {
         guard Self.ensurePermission() else { throw ScreenCaptureError.permissionDenied }
 
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        guard let display = content.displays.first(where: { $0.displayID == CGMainDisplayID() })
+        guard let display = content.displays.first(where: { $0.displayID == displayID })
+            ?? content.displays.first(where: { $0.displayID == CGMainDisplayID() })
             ?? content.displays.first
         else { throw ScreenCaptureError.noDisplayAvailable }
 
         // SCDisplay.width/height are points; use real pixels so the encoder size always matches.
-        let size = CaptureSize.mainDisplay(maxLongSide: settings.maxLongSide)
+        let size = CaptureSize.display(display.displayID, maxLongSide: settings.maxLongSide)
         let configuration = SCStreamConfiguration()
         configuration.width = size.width
         configuration.height = size.height

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import OSLog
 import RemoteCore
@@ -44,9 +45,10 @@ final class StreamingPipeline {
 
     var isRunning: Bool { capturer?.isRunning ?? false }
 
-    func start(settings: CaptureSettings = .default, sink: @escaping Sink) async throws {
+    /// - Parameter displayID: display to stream; nil means the main display.
+    func start(displayID: CGDirectDisplayID? = nil, settings: CaptureSettings = .default, sink: @escaping Sink) async throws {
         guard !isRunning else { return }
-        let size = CaptureSize.mainDisplay(maxLongSide: settings.maxLongSide)
+        let size = CaptureSize.display(displayID ?? CGMainDisplayID(), maxLongSide: settings.maxLongSide)
         let encoder = try H264Encoder(
             width: size.width,
             height: size.height,
@@ -56,7 +58,7 @@ final class StreamingPipeline {
         let capturer = ScreenCapturer()
         let logger = logger
         do {
-            try await capturer.start(settings: settings) { sampleBuffer in
+            try await capturer.start(displayID: displayID, settings: settings) { sampleBuffer in
                 do {
                     try encoder.encode(sampleBuffer)
                 } catch {

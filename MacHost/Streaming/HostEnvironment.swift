@@ -8,6 +8,10 @@ struct HostEnvironment: Sendable {
     static let pairedDevicesKey = "paired-devices"
     static let keepAwakeKey = "keepMacAwake"
     static let allowTailscaleKey = "allowTailscale"
+    /// Last streamed display, remembered per paired iPhone: `selectedDisplay.<fingerprint hex>`.
+    static func selectedDisplayKey(for fingerprint: DeviceFingerprint) -> String {
+        "selectedDisplay.\(fingerprint)"
+    }
 
     /// Loads (or creates on first run) this Mac's TLS identity.
     let loadIdentity: @Sendable (_ deviceName: String) throws -> DeviceIdentity
@@ -22,6 +26,8 @@ struct HostEnvironment: Sendable {
     /// Defaults are inert (in-memory settings, no power assertion) so tests never touch the system.
     var settings: any HostSettings = MemorySettings()
     var acquirePowerAssertion: PowerManager.Acquire = { _ in nil }
+    /// Current displays. Empty by default so tests never touch real screens (the pipeline then uses the main display).
+    var displays: @Sendable () -> [DisplayDescriptor] = { [] }
 
     static let live = HostEnvironment(
         loadIdentity: { name in try DeviceIdentity.loadOrCreate(deviceName: name) },
@@ -33,7 +39,8 @@ struct HostEnvironment: Sendable {
         clock: { Date() },
         limits: .standard,
         settings: UserDefaults.standard,
-        acquirePowerAssertion: PowerManager.systemAcquire
+        acquirePowerAssertion: PowerManager.systemAcquire,
+        displays: { SystemDisplays.current() }
     )
 }
 
@@ -41,11 +48,15 @@ struct HostEnvironment: Sendable {
 protocol HostSettings: Sendable {
     func bool(forKey key: String) -> Bool?
     func set(_ value: Bool, forKey key: String)
+    func string(forKey key: String) -> String?
+    func set(_ value: String?, forKey key: String)
 }
 
 extension UserDefaults: HostSettings {
     func bool(forKey key: String) -> Bool? { object(forKey: key) as? Bool }
     func set(_ value: Bool, forKey key: String) { set(value as Any, forKey: key) }
+    func string(forKey key: String) -> String? { object(forKey: key) as? String }
+    func set(_ value: String?, forKey key: String) { set(value as Any?, forKey: key) }
 }
 
 /// The Mac's "Pair New iPhone" window state for the UI.
@@ -83,7 +94,10 @@ extension PairingRejection {
 final class MemorySettings: HostSettings, @unchecked Sendable {
     private let lock = NSLock()
     private var values: [String: Bool] = [:]
+    private var strings: [String: String] = [:]
 
     func bool(forKey key: String) -> Bool? { lock.withLock { values[key] } }
     func set(_ value: Bool, forKey key: String) { lock.withLock { values[key] = value } }
+    func string(forKey key: String) -> String? { lock.withLock { strings[key] } }
+    func set(_ value: String?, forKey key: String) { lock.withLock { strings[key] = value } }
 }

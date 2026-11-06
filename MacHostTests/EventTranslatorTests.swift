@@ -21,6 +21,15 @@ struct EventTranslatorTests {
         #expect(event.location == CGPoint(x: 600, y: 175))
     }
 
+    @Test func mapsIntoADisplayLeftOfAndAboveTheMainDisplay() throws {
+        var translator = EventTranslator(displayBounds: CGRect(x: -1920, y: -200, width: 1920, height: 1080), source: nil)
+
+        let events = translator.events(for: .pointerMove(NormalizedPoint(x: 0.5, y: 0.5)), now: 0)
+
+        let event = try #require(events.first)
+        #expect(event.location == CGPoint(x: -960, y: 340))
+    }
+
     @Test func movesBecomeDragsWhileLeftButtonIsHeld() throws {
         var translator = makeTranslator()
         _ = translator.events(for: .button(.left, isDown: true, at: .center), now: 0)

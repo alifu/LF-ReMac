@@ -23,6 +23,8 @@ final class PeerConnection: @unchecked Sendable {
     private(set) var role: Role = .handshaking
     private(set) var decoder = FrameDecoder()
     var gate = ClientSendGate()
+    /// What the iPhone's hello asked for; stays `.legacy` for builds that never say hello.
+    var capabilities = PeerCapabilities.legacy
     /// Set by `cancel()`; the `.cancelled` state update arrives later, so callers check this first.
     private(set) var isClosed = false
     private var deadline: DispatchWorkItem?

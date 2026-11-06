@@ -89,6 +89,70 @@ struct StreamServerLoopbackTests {
         }
     }
 
+    // MARK: Phase 7 session messages
+
+    private let displayID = "11111111-2222-3333-4444-555555555555"
+
+    private func sampleHostInfo() -> HostInfo {
+        HostInfo(
+            displays: [DisplayInfo(id: displayID, name: "Built-in", pixelWidth: 100, pixelHeight: 50, isMain: true)],
+            selectedID: displayID, wakeMACs: [], virtualDisplaySupported: false
+        )
+    }
+
+    @Test func helloBecomesACapabilitiesEvent() async throws {
+        try await withPairedClient { harness, _, client in
+            let hello = ClientHello(protocolVersion: 1, capabilities: [.displays])
+            client.send(try SessionMessageCoding.frame(for: hello, timestampMicros: 0))
+
+            try await harness.recorder.waitFor(.clientHello(PeerCapabilities(hello: hello)))
+        }
+    }
+
+    @Test func hostInfoReachesAClientThatAskedForDisplays() async throws {
+        try await withPairedClient { harness, _, client in
+            let hello = ClientHello(protocolVersion: 1, capabilities: [.displays])
+            client.send(try SessionMessageCoding.frame(for: hello, timestampMicros: 0))
+            try await harness.recorder.waitFor(.clientHello(PeerCapabilities(hello: hello)))
+
+            harness.server.sendHostInfo(sampleHostInfo())
+
+            let received = try await client.receive(count: 1)
+            #expect(try SessionMessageCoding.hostInfo(from: received[0]) == sampleHostInfo())
+        }
+    }
+
+    @Test func hostInfoIsNotSentToAClientThatNeverSaidHello() async throws {
+        try await withPairedClient { harness, _, client in
+            harness.server.sendHostInfo(sampleHostInfo())
+            let ping = Frame(type: .ping, timestampMicros: 1, payload: Data([1]))
+            client.send(ping)
+
+            let received = try await client.receive(count: 1)
+
+            #expect(received == [ping])  // the first thing back is the echo, so no hostInfo came before it
+        }
+    }
+
+    @Test func selectDisplayBecomesAnEvent() async throws {
+        try await withPairedClient { harness, _, client in
+            client.send(try SessionMessageCoding.frame(for: SelectDisplay(displayID: displayID), timestampMicros: 0))
+
+            try await harness.recorder.waitFor(.displaySelected(displayID))
+        }
+    }
+
+    @Test func invalidSelectDisplayIsDroppedAndConnectionStaysUp() async throws {
+        try await withPairedClient { harness, _, client in
+            client.send(Frame(type: .selectDisplay, timestampMicros: 0, payload: Data(#"{"displayID":"nope"}"#.utf8)))
+            client.send(try SessionMessageCoding.frame(for: SelectDisplay(displayID: displayID), timestampMicros: 1))
+
+            try await harness.recorder.waitFor(.displaySelected(displayID))
+            #expect(harness.recorder.count { if case .displaySelected = $0 { true } else { false } } == 1)
+            #expect(!client.isClosed)
+        }
+    }
+
     @Test func newPairedConnectionReplacesTheActiveSession() async throws {
         try await withPairedClient { harness, phone, first in
             let second = try harness.connect(phone)

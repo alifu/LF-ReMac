@@ -21,8 +21,12 @@ struct CaptureSize: Equatable, Sendable {
     /// Main display in real pixels (not points), scaled to the limit. `ScreenCapturer` and the
     /// encoder must both use this so frame and encoder dimensions always match.
     static func mainDisplay(maxLongSide: Int) -> CaptureSize {
-        let displayID = CGMainDisplayID()
-        return fitting(
+        display(CGMainDisplayID(), maxLongSide: maxLongSide)
+    }
+
+    /// Any display in real pixels, scaled to the limit.
+    static func display(_ displayID: CGDirectDisplayID, maxLongSide: Int) -> CaptureSize {
+        fitting(
             width: CGDisplayPixelsWide(displayID),
             height: CGDisplayPixelsHigh(displayID),
             maxLongSide: maxLongSide

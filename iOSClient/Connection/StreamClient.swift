@@ -20,6 +20,8 @@ final class StreamClient {
 
     private(set) var state: State = .idle
     private(set) var stats = StreamStats.empty
+    /// Pixel size of the Mac's picture, known once the first video config arrives.
+    private(set) var videoSize: CGSize = .zero
     let renderer: VideoRenderer
 
     @ObservationIgnored private let collector: StatsCollector
@@ -54,6 +56,9 @@ final class StreamClient {
             }
         }
         renderer.onKeyframeNeeded = { [weak link] in link?.send(Frame.keyframeRequest()) }
+        renderer.onVideoSizeChange = { [weak self] size in
+            Task { @MainActor in self?.videoSize = size }
+        }
         self.link = link
         link.start(chunkBytes: Self.receiveChunkBytes)
     }
@@ -63,8 +68,20 @@ final class StreamClient {
         link?.close()
         link = nil
         renderer.onKeyframeNeeded = nil
+        renderer.onVideoSizeChange = nil
         stats = .empty
+        videoSize = .zero
         if isActive { state = .idle }
+    }
+
+    /// Sends a touch or keyboard event to the Mac; dropped silently when not connected.
+    func send(_ event: InputEvent) {
+        guard case .connected = state, let link else { return }
+        do {
+            link.send(try InputEventCoding.frame(for: event, timestampMicros: MonotonicClock.nowMicros()))
+        } catch {
+            logger.error("Could not encode input: \(String(describing: error), privacy: .public)")
+        }
     }
 
     private func apply(_ linkState: Link.State, name: String) {

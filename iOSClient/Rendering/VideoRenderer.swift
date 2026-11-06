@@ -14,6 +14,8 @@ final class VideoRenderer: @unchecked Sendable {
     let displayLayer: AVSampleBufferDisplayLayer
     /// Called (on the handling queue) when the host should send a fresh keyframe.
     var onKeyframeNeeded: (@Sendable () -> Void)?
+    /// Called (on the handling queue) when the host's picture size becomes known or changes.
+    var onVideoSizeChange: (@Sendable (CGSize) -> Void)?
 
     private let logger = AppLog.logger(category: "renderer")
     private let statsCollector: StatsCollector?
@@ -52,11 +54,18 @@ final class VideoRenderer: @unchecked Sendable {
         do {
             if try factory.ingestConfig(payload) {
                 displayLayer.flush()
+                reportVideoSize()
             }
         } catch {
             logger.error("Bad video config: \(error.localizedDescription, privacy: .public)")
             waitForKeyframe()
         }
+    }
+
+    private func reportVideoSize() {
+        guard let format = factory.formatDescription else { return }
+        let dimensions = CMVideoFormatDescriptionGetDimensions(format)
+        onVideoSizeChange?(CGSize(width: Int(dimensions.width), height: Int(dimensions.height)))
     }
 
     private func handleVideo(_ frame: Frame) {

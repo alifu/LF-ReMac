@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 
 enum H264FileRecorderError: Error, LocalizedError, Equatable {
@@ -56,3 +57,4 @@ actor H264FileRecorder {
         }
     }
 }
+#endif

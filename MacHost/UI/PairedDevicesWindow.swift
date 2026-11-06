@@ -56,6 +56,9 @@ struct PairedDevicesWindow: View {
                 Text("Paired \(device.pairedAt.formatted(date: .abbreviated, time: .shortened))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Text("Key \(device.fingerprint.verificationCode)")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
             }
             Spacer()
             Button("Revoke", role: .destructive) { pendingRevoke = device }

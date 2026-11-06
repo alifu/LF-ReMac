@@ -142,6 +142,25 @@ struct EventTranslatorTests {
         #expect(second.isEmpty)
     }
 
+    @Test func releaseAllLiftsKeysThatAreStillDown() {
+        var translator = makeTranslator()
+        _ = translator.events(for: .key(.arrowLeft, isDown: true, modifiers: [.shift]), now: 0)
+
+        let released = translator.releaseAll()
+
+        #expect(released.map(\.type) == [.keyUp])
+        #expect(released.first?.getIntegerValueField(.keyboardEventKeycode) == 123)
+        #expect(translator.releaseAll().isEmpty)
+    }
+
+    @Test func releaseAllIgnoresKeysAlreadyReleased() {
+        var translator = makeTranslator()
+        _ = translator.events(for: .key(.tab, isDown: true, modifiers: []), now: 0)
+        _ = translator.events(for: .key(.tab, isDown: false, modifiers: []), now: 0.1)
+
+        #expect(translator.releaseAll().isEmpty)
+    }
+
     private static func unicode(of event: CGEvent) -> String {
         var length = 0
         var buffer = [UniChar](repeating: 0, count: 8)

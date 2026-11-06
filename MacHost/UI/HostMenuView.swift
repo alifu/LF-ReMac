@@ -1,7 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Drives the debug clip recording shown in the menu.
+#if DEBUG
+/// Drives the debug clip recording shown in the menu (Debug builds only: it writes raw screen content to disk).
 @MainActor
 @Observable
 final class TestClipModel {
@@ -28,17 +29,23 @@ final class TestClipModel {
     }
 }
 
+#endif
+
 struct HostMenuView: View {
     let session: HostSession
+    #if DEBUG
     @State private var clipModel = TestClipModel()
+    #endif
 
     var body: some View {
         HostingSection(session: session)
         Divider()
         PairingMenuSection(session: session)
         Divider()
+        #if DEBUG
         TestClipSection(model: clipModel)
         Divider()
+        #endif
         Button("Quit LF-ReMac") {
             NSApplication.shared.terminate(nil)
         }
@@ -46,6 +53,7 @@ struct HostMenuView: View {
     }
 }
 
+#if DEBUG
 private struct TestClipSection: View {
     let model: TestClipModel
 
@@ -72,3 +80,4 @@ private struct TestClipSection: View {
         }
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if DEBUG
 import CoreGraphics
 import Foundation
 import OSLog
@@ -115,3 +116,4 @@ private extension EncodedVideoEvent {
         }
     }
 }
+#endif

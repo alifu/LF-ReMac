@@ -9,6 +9,8 @@ struct ConnectionView: View {
     @State private var browser = HostBrowser()
     @State private var pairedHosts: [PairedHost] = []
     @State private var pairingRequest: PairingRequest?
+    @State private var hostPendingForget: PairedHost?
+    @State private var forgetError: String?
 
     init(credentials: PhoneCredentials) {
         self.credentials = credentials
@@ -75,13 +77,50 @@ struct ConnectionView: View {
                 pairingRequest = PairingRequest(mode: .scan)
             }
             ForEach(pairedHosts, id: \.fingerprint) { host in
-                if let endpoint = PairedHostTarget.endpoint(for: host, discovered: browser.hosts) {
-                    Button(host.name) { client.connect(to: endpoint, host: host) }
-                } else {
-                    LabeledContent(host.name, value: "Not found on this network")
-                }
+                pairedRow(host)
+                    .swipeActions {
+                        Button("Forget", role: .destructive) { hostPendingForget = host }
+                    }
+            }
+            if let forgetError {
+                Label(forgetError, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
             }
         }
+        .confirmationDialog(
+            "Forget this Mac?",
+            isPresented: Binding(get: { hostPendingForget != nil }, set: { if !$0 { hostPendingForget = nil } }),
+            titleVisibility: .visible,
+            presenting: hostPendingForget
+        ) { host in
+            Button("Forget \(host.name)", role: .destructive) { forget(host) }
+        } message: { host in
+            Text("You will need to pair with \(host.name) again to reconnect.")
+        }
+    }
+
+    @ViewBuilder
+    private func pairedRow(_ host: PairedHost) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if let endpoint = PairedHostTarget.endpoint(for: host, discovered: browser.hosts) {
+                Button(host.name) { client.connect(to: endpoint, host: host) }
+            } else {
+                LabeledContent(host.name, value: "Not found on this network")
+            }
+            Text("Key \(host.fingerprint.verificationCode)")
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func forget(_ host: PairedHost) {
+        hostPendingForget = nil
+        do {
+            try credentials.hostStore.remove(host.fingerprint)
+            forgetError = nil
+        } catch {
+            forgetError = "Could not forget \(host.name). Try again."
+        }
+        reloadPairedHosts()
     }
 
     private var discoveredSection: some View {
@@ -115,7 +154,10 @@ private struct PairingSheet: View {
         self.discovered = discovered
         self.request = request
         self.onFinished = onFinished
-        _model = State(initialValue: PairingModel(service: PairingService(credentials: credentials)))
+        _model = State(initialValue: PairingModel(
+            service: PairingService(credentials: credentials),
+            pairedHosts: { credentials.hostStore.all() }
+        ))
     }
 
     var body: some View {

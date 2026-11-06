@@ -60,7 +60,17 @@ struct PairingWindow: View {
             }
             Text(invitation.secret.displayCode)
                 .font(.system(.title3, design: .monospaced))
-                .textSelection(.enabled)
+            VStack(spacing: 2) {
+                Text("This Mac's security code")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(invitation.hostFingerprint.verificationCode)
+                    .font(.system(.callout, design: .monospaced))
+                Text("Your iPhone shows this code before pairing. Only continue if they match.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
             Text("On your iPhone open LF-ReMac and tap Pair, then scan this code or type the code.")
                 .font(.callout)
                 .multilineTextAlignment(.center)

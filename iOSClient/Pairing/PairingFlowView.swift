@@ -55,7 +55,16 @@ struct PairingFlowView: View {
         .interactiveDismissDisabled(model.isWorking)
     }
 
+    @ViewBuilder
     private var pairingContent: some View {
+        if case .confirming(let confirmation) = model.state {
+            confirmationView(confirmation)
+        } else {
+            pickerContent
+        }
+    }
+
+    private var pickerContent: some View {
         VStack(spacing: 0) {
             Picker("Method", selection: $mode) {
                 Text("Scan QR").tag(PairingRequest.Mode.scan)
@@ -125,9 +134,38 @@ struct PairingFlowView: View {
                 .foregroundStyle(.red)
                 .font(.footnote)
                 .padding()
-        case .idle, .paired:
+        case .idle, .paired, .confirming:
             EmptyView()
         }
+    }
+
+    private func confirmationView(_ confirmation: PairingConfirmation) -> some View {
+        VStack(spacing: 20) {
+            Image(systemName: "lock.shield").font(.system(size: 48)).foregroundStyle(.tint)
+            Text("Is this your Mac?").font(.title2.bold())
+            Text("Compare this code with the one shown in the Mac's pairing window. Only continue if they are identical.")
+                .multilineTextAlignment(.center)
+            Text(confirmation.securityCode)
+                .font(.system(.title, design: .monospaced).bold())
+                .accessibilityLabel("Security code \(confirmation.securityCode)")
+            Text("Address in the QR code: \(confirmation.hostLabel)")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            if let warning = confirmation.warning {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .padding()
+                    .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            }
+            HStack {
+                Button("They Differ", role: .cancel) { model.cancelConfirmation() }
+                    .buttonStyle(.bordered)
+                Button("They Match") { Task { await model.confirmScanned() } }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding()
     }
 
     private func successView(_ hostName: String) -> some View {

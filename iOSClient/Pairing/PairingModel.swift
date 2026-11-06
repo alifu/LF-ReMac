@@ -18,12 +18,23 @@ enum PairingInputError: Error, Equatable {
     }
 }
 
+/// What the user must check before a scanned QR code is trusted.
+struct PairingConfirmation: Equatable {
+    /// Address label from the QR code (not verified; shown for context only).
+    let hostLabel: String
+    /// Short code of the Mac's key; must equal the code shown in the Mac's pairing window.
+    let securityCode: String
+    /// Set when this looks like a Mac that is already paired.
+    let warning: String?
+}
+
 /// Drives the pairing screens: validates input, runs the handshake, reports a result for the UI.
 @MainActor
 @Observable
 final class PairingModel {
     enum State: Equatable {
         case idle
+        case confirming(PairingConfirmation)
         case working
         case failed(String)
         case paired(hostName: String)
@@ -31,22 +42,43 @@ final class PairingModel {
 
     private(set) var state: State = .idle
     private let service: PairingService
+    private let pairedHosts: @MainActor () -> [PairedHost]
+    private var pendingInvitation: PairingInvitation?
 
-    init(service: PairingService) {
+    init(service: PairingService, pairedHosts: @escaping @MainActor () -> [PairedHost] = { [] }) {
         self.service = service
+        self.pairedHosts = pairedHosts
     }
 
     var isWorking: Bool { state == .working }
 
-    /// QR flow. Ignores repeated scans while a pairing attempt is running.
+    /// QR flow, step 1: nothing is sent to any Mac until the user confirms the Mac's security code.
+    /// Ignores repeated scans while a confirmation or pairing attempt is open.
     func handleScanned(_ text: String) async {
-        guard !isWorking else { return }
+        switch state {
+        case .working, .confirming: return
+        case .idle, .failed, .paired: break
+        }
         switch Self.invitation(from: text) {
         case .failure(let error):
             state = .failed(error.userMessage)
         case .success(let invitation):
-            await run { () async throws(PhonePairingError) -> PairedHost in try await self.service.pair(with: invitation) }
+            pendingInvitation = invitation
+            state = .confirming(Self.confirmation(for: invitation, existing: pairedHosts()))
         }
+    }
+
+    /// QR flow, step 2: the user confirmed the codes match.
+    func confirmScanned() async {
+        guard case .confirming = state, let invitation = pendingInvitation else { return }
+        pendingInvitation = nil
+        await run { () async throws(PhonePairingError) -> PairedHost in try await self.service.pair(with: invitation) }
+    }
+
+    func cancelConfirmation() {
+        guard case .confirming = state else { return }
+        pendingInvitation = nil
+        state = .idle
     }
 
     /// Typed-code flow: the user chose a Mac (found by Bonjour or typed in) and entered the code.
@@ -63,6 +95,7 @@ final class PairingModel {
 
     func reset() {
         guard !isWorking else { return }
+        pendingInvitation = nil
         state = .idle
     }
 
@@ -72,6 +105,34 @@ final class PairingModel {
         } catch {
             return .failure(.notAnInvitation)
         }
+    }
+
+    nonisolated static func confirmation(for invitation: PairingInvitation, existing: [PairedHost]) -> PairingConfirmation {
+        PairingConfirmation(
+            hostLabel: invitation.host,
+            securityCode: invitation.hostFingerprint.verificationCode,
+            warning: warning(for: invitation, existing: existing)
+        )
+    }
+
+    nonisolated private static func warning(for invitation: PairingInvitation, existing: [PairedHost]) -> String? {
+        if existing.contains(where: { $0.fingerprint == invitation.hostFingerprint }) {
+            return "This Mac is already paired. Pairing again simply refreshes it."
+        }
+        let label = normalized(invitation.host)
+        let looksLikeKnownMac = existing.contains { host in
+            normalized(host.name) == label || host.lastKnownHost.map(normalized) == label
+        }
+        if looksLikeKnownMac {
+            return "You already have a Mac with this name, but its security key is DIFFERENT. "
+                + "Unless you reinstalled or replaced that Mac, stop: someone may be pretending to be it."
+        }
+        return nil
+    }
+
+    nonisolated private static func normalized(_ name: String) -> String {
+        let lowered = name.lowercased()
+        return lowered.hasSuffix(".local") ? String(lowered.dropLast(".local".count)) : lowered
     }
 
     nonisolated static func endpoint(host: String, portText: String) -> NWEndpoint? {

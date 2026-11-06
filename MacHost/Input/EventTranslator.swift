@@ -10,6 +10,8 @@ struct EventTranslator {
     let source: CGEventSource?
 
     private var heldButton: PointerButton?
+    /// Keys currently pressed (code -> modifiers they were pressed with), so a dropped link cannot leave one stuck.
+    private var heldKeys: [CGKeyCode: KeyModifiers] = [:]
     private var lastLocation: CGPoint
     private var clicks = ClickCounter()
 
@@ -30,19 +32,30 @@ struct EventTranslator {
         case .text(let text):
             return text.flatMap { typed($0) }
         case .key(let key, let isDown, let modifiers):
-            return keyEvent(code: KeyCodes.code(for: key), isDown: isDown, modifiers: modifiers).map { [$0] } ?? []
+            let code = KeyCodes.code(for: key)
+            heldKeys[code] = isDown ? modifiers : nil
+            return keyEvent(code: code, isDown: isDown, modifiers: modifiers).map { [$0] } ?? []
         case .shortcut(let character, let modifiers):
             return shortcut(character, modifiers: modifiers)
         }
     }
 
-    /// Lifts any held button (e.g. when the client disconnects mid-drag) so the Mac is not left clicking.
+    /// Lifts any held mouse button or key (e.g. when the client disconnects mid-drag or mid-keypress)
+    /// so the Mac is not left clicking or typing.
     mutating func releaseAll() -> [CGEvent] {
-        guard let button = heldButton else { return [] }
-        heldButton = nil
-        let type: CGEventType = button == .left ? .leftMouseUp : .rightMouseUp
-        let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: lastLocation, mouseButton: cgButton(button))
-        return event.map { [$0] } ?? []
+        var events: [CGEvent] = []
+        if let button = heldButton {
+            heldButton = nil
+            let type: CGEventType = button == .left ? .leftMouseUp : .rightMouseUp
+            if let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: lastLocation, mouseButton: cgButton(button)) {
+                events.append(event)
+            }
+        }
+        for (code, modifiers) in heldKeys.sorted(by: { $0.key < $1.key }) {
+            if let event = keyEvent(code: code, isDown: false, modifiers: modifiers) { events.append(event) }
+        }
+        heldKeys.removeAll()
+        return events
     }
 
     // MARK: - Pointer

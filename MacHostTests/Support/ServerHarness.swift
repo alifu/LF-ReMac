@@ -37,9 +37,19 @@ final class EventRecorder: Sendable {
 
 /// A real `StreamServer` on loopback with a test host identity, in-memory store and test clock.
 struct ServerHarness {
-    static let shortLimits = StreamServerLimits(
-        maxHandshaking: 8, maxPairingConnections: 2, handshakeTimeout: 5, pairRequestTimeout: 0.6, pairingLinger: 1
-    )
+    /// Every loopback client shares 127.0.0.1, so per-address caps are relaxed unless a test sets them.
+    static let shortLimits = limits(pairRequestTimeout: 0.6)
+
+    static func limits(
+        maxHandshaking: Int = 8, perAddressHandshaking: Int = 8, maxPairing: Int = 2, perAddressPairing: Int = 2,
+        handshakeTimeout: TimeInterval = 5, pairRequestTimeout: TimeInterval = 5
+    ) -> StreamServerLimits {
+        StreamServerLimits(
+            maxHandshaking: maxHandshaking, maxHandshakingPerAddress: perAddressHandshaking,
+            maxPairingConnections: maxPairing, maxPairingConnectionsPerAddress: perAddressPairing,
+            handshakeTimeout: handshakeTimeout, pairRequestTimeout: pairRequestTimeout, pairingLinger: 1
+        )
+    }
 
     let host: DeviceIdentity
     let store: PairedDeviceStore
@@ -106,8 +116,8 @@ struct ServerHarness {
         )
     }
 
-    /// TLS client that pins this server's identity.
-    func connect(_ phone: DeviceIdentity) throws -> TLSTestClient {
-        try TLSTestClient(port: port, identity: phone, pinning: host.fingerprint)
+    /// TLS client that pins this server's identity; `address` picks the loopback source/destination.
+    func connect(_ phone: DeviceIdentity, address: String = "127.0.0.1") throws -> TLSTestClient {
+        try TLSTestClient(port: port, identity: phone, pinning: host.fingerprint, address: address)
     }
 }

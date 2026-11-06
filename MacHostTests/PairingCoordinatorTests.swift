@@ -92,25 +92,33 @@ struct PairingCoordinatorTests {
         #expect(coordinator.attempt(proof: proof, clientFingerprint: Keys.phone, deviceName: "Phone") == .failure(.invalidProof))
     }
 
-    @Test func recordedFailuresUseUpTheAttemptBudget() throws {
+    @Test func onlyWrongProofsUseUpTheAttemptBudget() throws {
         let coordinator = makeCoordinator()
-        _ = try coordinator.start(port: 1)
+        let secret = try coordinator.start(port: 1).secret
+        let wrong = Data(repeating: 0, count: PairingProof.byteCount)
+        let valid = PairingProof.client(secret: secret, client: Keys.phone, server: Keys.host)
 
-        let failures = (0..<PairingSession.maxFailedAttempts).map { _ in coordinator.recordFailedAttempt(from: Keys.phone) }
+        let reflected = (0..<5).map { _ in coordinator.attempt(proof: valid, clientFingerprint: Keys.host, deviceName: "Phone") }
+        let failures = (0..<PairingSession.maxFailedAttempts).map { _ in
+            coordinator.attempt(proof: wrong, clientFingerprint: Keys.phone, deviceName: "Phone")
+        }
 
-        #expect(failures.allSatisfy { $0 == .invalidRequest })
+        #expect(reflected.allSatisfy { $0 == .failure(.invalidRequest) })
+        #expect(failures.allSatisfy { $0 == .failure(.invalidProof) })
         #expect(!coordinator.isOpen)
-        #expect(coordinator.recordFailedAttempt(from: Keys.phone) == .tooManyAttempts)
+        #expect(coordinator.attempt(proof: valid, clientFingerprint: Keys.phone, deviceName: "Phone") == .failure(.tooManyAttempts))
     }
 }
 
 struct ConnectionAuthorizerTests {
     private func authorize(
-        _ peer: DeviceFingerprint?, paired: Set<DeviceFingerprint> = [], open: Bool = false, pending: Int = 0
+        _ peer: DeviceFingerprint?, paired: Set<DeviceFingerprint> = [], open: Bool = false, pending: Int = 0,
+        pendingFromAddress: Int = 0
     ) -> ConnectionAuthorization {
         ConnectionAuthorizer.authorize(
             peer: peer, hostFingerprint: Keys.host, isPaired: { paired.contains($0) },
-            isPairingOpen: open, pairingConnections: pending, maxPairingConnections: 2
+            isPairingOpen: open, pairingConnections: pending, maxPairingConnections: 2,
+            pairingConnectionsFromAddress: pendingFromAddress, maxPairingConnectionsPerAddress: 1
         )
     }
 
@@ -126,6 +134,12 @@ struct ConnectionAuthorizerTests {
 
     @Test func pairingConnectionsAreCapped() {
         #expect(authorize(Keys.phone, open: true, pending: 2) == .refused(.tooManyPairingConnections))
+    }
+
+    @Test func pairingConnectionsArePerAddressCappedButPairedPeersAreNot() {
+        #expect(authorize(Keys.phone, open: true, pending: 1, pendingFromAddress: 1) == .refused(.tooManyPairingConnectionsFromAddress))
+        #expect(authorize(Keys.phone, open: true, pending: 1, pendingFromAddress: 0) == .pairing(Keys.phone))
+        #expect(authorize(Keys.phone, paired: [Keys.phone], open: true, pending: 1, pendingFromAddress: 1) == .paired(Keys.phone))
     }
 
     @Test func missingCertificateAndOwnKeyAreRefused() {
@@ -170,14 +184,38 @@ struct PairingResponderTests {
         #expect(responder.store.all().isEmpty)
     }
 
-    @Test func malformedRequestCountsAsAFailedAttempt() throws {
-        let (responder, _) = try makeResponder()
+    @Test func malformedRequestsAreRejectedWithoutUsingUpAttempts() throws {
+        let (responder, secret) = try makeResponder()
         let garbage = Frame(type: .pairRequest, timestampMicros: 0, payload: Data("{}".utf8))
+        let wrongType = Frame(type: .input, timestampMicros: 0, payload: Data())
 
-        #expect(responder.respond(to: garbage, from: Keys.phone) == .rejected(.attempt(.invalidRequest)))
-        #expect(responder.protocolViolation(from: Keys.phone) == .attempt(.invalidRequest))
-        #expect(responder.protocolViolation(from: Keys.phone) == .attempt(.invalidRequest))
-        #expect(!responder.coordinator.isOpen)
+        for _ in 0..<(PairingSession.maxFailedAttempts * 2) {
+            #expect(responder.respond(to: garbage, from: Keys.phone) == .rejected(.malformedRequest))
+            #expect(responder.respond(to: wrongType, from: Keys.phone) == .rejected(.malformedRequest))
+        }
+
+        #expect(responder.coordinator.isOpen)
+        guard case .accepted = responder.respond(to: try request(secret), from: Keys.phone) else {
+            Issue.record("expected acceptance after junk")
+            return
+        }
+    }
+
+    @Test func wrongProofIsReportedAsAWrongCode() throws {
+        let (responder, _) = try makeResponder()
+
+        let outcome = responder.respond(to: try request(.random()), from: Keys.phone)
+
+        #expect(outcome == .rejected(.attempt(.invalidProof)))
+        #expect(PairingRejection.attempt(.invalidProof).userMessage == "A device tried to pair with a wrong code.")
+    }
+
+    @Test func corruptedStoreRefusesToSaveAndKeepsTheOldData() throws {
+        let keyStore = InMemoryKeyStore(["paired": Data("garbage".utf8)])
+        let (responder, secret) = try makeResponder(keyStore: keyStore)
+
+        #expect(responder.respond(to: try request(secret), from: Keys.phone) == .rejected(.couldNotSave))
+        #expect(try keyStore.data(forKey: "paired") == Data("garbage".utf8))
     }
 
     @Test func storeFailureIsReportedAndNoReplyIsSent() throws {

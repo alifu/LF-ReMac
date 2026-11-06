@@ -190,9 +190,7 @@ struct PairingLoopbackTests {
     }
 
     @Test func unpairedConnectionsBeyondTheCapAreDropped() async throws {
-        let limits = StreamServerLimits(
-            maxHandshaking: 8, maxPairingConnections: 2, handshakeTimeout: 5, pairRequestTimeout: 5, pairingLinger: 1
-        )
+        let limits = ServerHarness.limits(maxPairing: 2, perAddressPairing: 8)
         try await ServerHarness.run(phones: ["A", "B", "C"], limits: limits) { harness, phones in
             _ = try harness.coordinator.start(port: harness.port)
             let first = try harness.connect(phones[0])

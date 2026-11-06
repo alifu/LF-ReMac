@@ -21,3 +21,13 @@ enum KeychainAccess {
         try lock.locked(body)
     }
 }
+
+extension OSAllocatedUnfairLock {
+    /// `withLockUnchecked` that keeps the body's typed error.
+    func lockedState<T, E: Error>(_ body: (inout State) throws(E) -> T) throws(E) -> T {
+        let result: Result<T, E> = withLockUnchecked { state in
+            Result { () throws(E) -> T in try body(&state) }
+        }
+        return try result.get()
+    }
+}

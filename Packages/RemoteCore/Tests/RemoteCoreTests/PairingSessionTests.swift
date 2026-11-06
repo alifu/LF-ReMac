@@ -86,14 +86,14 @@ struct PairingSessionTests {
         #expect(attempt(open, client: Fixtures.attacker).result == .failure(.invalidProof))
     }
 
-    @Test func invalidNameOrReflectedFingerprintCountsAsFailure() {
+    @Test func invalidNameOrReflectedFingerprintIsRejectedWithoutUsingAnAttempt() {
         let badName = attempt(open, name: "bad\nname")
         let reflected = attempt(badName.session, client: Fixtures.host)
-        let third = attempt(reflected.session, proof: wrongProof)
 
         #expect(badName.result == .failure(.invalidRequest))
         #expect(reflected.result == .failure(.invalidRequest))
-        #expect(attempt(third.session).result == .failure(.tooManyAttempts))
+        #expect(reflected.session.state == open.state)
+        #expect(throws: Never.self) { try attempt(reflected.session).result.get() }
     }
 
     @Test func originalValueIsUnchangedByAttempts() {

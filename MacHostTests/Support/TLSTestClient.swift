@@ -16,8 +16,8 @@ final class TLSTestClient: Sendable {
     private let queue = DispatchQueue(label: "loopback.tls-client")
     private let status = OSAllocatedUnfairLock(initialState: Status())
 
-    init(port: UInt16, identity: DeviceIdentity, pinning server: DeviceFingerprint) throws {
-        let endpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port) ?? .any)
+    init(port: UInt16, identity: DeviceIdentity, pinning server: DeviceFingerprint, address: String = "127.0.0.1") throws {
+        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(address), port: NWEndpoint.Port(rawValue: port) ?? .any)
         connection = NWConnection(to: endpoint, using: try TLSParameters.client(identity: identity) { $0 == server })
         connection.stateUpdateHandler = { [status] state in
             switch state {

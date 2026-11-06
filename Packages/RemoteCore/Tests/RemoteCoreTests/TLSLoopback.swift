@@ -109,3 +109,28 @@ enum TLSLoopback {
         }
     }
 }
+
+/// Thread-safe counter for verify-block calls.
+final class Counter: Sendable {
+    private let count = OSAllocatedUnfairLock(initialState: 0)
+
+    var value: Int { count.withLock { $0 } }
+
+    func increment() {
+        count.withLock { $0 += 1 }
+    }
+}
+
+/// Thread-safe Bool a test can flip while TLS verify blocks read it.
+final class Flag: Sendable {
+    private let state: OSAllocatedUnfairLock<Bool>
+
+    init(_ initial: Bool) {
+        state = OSAllocatedUnfairLock(initialState: initial)
+    }
+
+    var value: Bool {
+        get { state.withLock { $0 } }
+        set { state.withLock { $0 = newValue } }
+    }
+}

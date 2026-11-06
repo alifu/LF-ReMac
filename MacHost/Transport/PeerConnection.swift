@@ -2,24 +2,6 @@ import Foundation
 import Network
 import RemoteCore
 
-/// Resource limits for connections that are not (yet) the authorized session.
-struct StreamServerLimits: Sendable {
-    /// TCP/TLS handshakes in progress at once; more are cancelled on arrival.
-    let maxHandshaking: Int
-    /// Unpaired connections allowed while the pairing window is open.
-    let maxPairingConnections: Int
-    /// A connection must finish the TLS handshake within this time.
-    let handshakeTimeout: TimeInterval
-    /// An unpaired connection must send its `pairRequest` within this time.
-    let pairRequestTimeout: TimeInterval
-    /// How long a paired-and-answered pairing connection may linger so the reply can drain.
-    let pairingLinger: TimeInterval
-
-    static let standard = StreamServerLimits(
-        maxHandshaking: 8, maxPairingConnections: 4, handshakeTimeout: 10, pairRequestTimeout: 10, pairingLinger: 2
-    )
-}
-
 /// Per-connection state; only touched on the server queue.
 final class PeerConnection: @unchecked Sendable {
     enum Role: Equatable {
@@ -36,6 +18,8 @@ final class PeerConnection: @unchecked Sendable {
     static let pairedReadBytes = 64 * 1024
 
     let connection: NWConnection
+    /// Where the connection comes from, for per-address quotas.
+    let source: ConnectionSource
     private(set) var role: Role = .handshaking
     private(set) var decoder = FrameDecoder()
     var gate = ClientSendGate()
@@ -45,6 +29,7 @@ final class PeerConnection: @unchecked Sendable {
 
     init(connection: NWConnection) {
         self.connection = connection
+        self.source = ConnectionSource(endpoint: connection.endpoint)
     }
 
     var fingerprint: DeviceFingerprint? {

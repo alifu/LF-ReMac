@@ -85,6 +85,36 @@ struct TLSParametersTests {
         }
     }
 
+    @Test func everyReconnectRunsBothVerifyBlocksSoARevocationApplies() async throws {
+        try await withIdentities { host, phone in
+            let serverChecks = Counter()
+            let clientChecks = Counter()
+            let allowed = Flag(true)
+            let server = try TLSEchoServer(parameters: TLSParameters.server(identity: host) { fingerprint in
+                serverChecks.increment()
+                return allowed.value && fingerprint == phone.fingerprint
+            })
+            let port = try #require(await server.start())
+            defer { server.stop() }
+            // One parameters object for every connection, as a resumption cache would key on it.
+            let client = try TLSParameters.client(identity: phone) { fingerprint in
+                clientChecks.increment()
+                return fingerprint == host.fingerprint
+            }
+
+            let first = await TLSLoopback.exchange(message, port: port, parameters: client)
+            let second = await TLSLoopback.exchange(message, port: port, parameters: client)
+            allowed.value = false
+            let revoked = await TLSLoopback.exchange(message, port: port, parameters: client)
+
+            #expect(first == .echoed(message, serverFingerprint: host.fingerprint))
+            #expect(second == first)
+            #expect(revoked == .failed)
+            #expect(serverChecks.value == 3)
+            #expect(clientChecks.value == 3)
+        }
+    }
+
     // MARK: Helpers
 
     private func withIdentities(_ body: (DeviceIdentity, DeviceIdentity) async throws -> Void) async throws {

@@ -9,11 +9,14 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct HostSessionPairingTests {
-    private func withSession(_ body: (HostSession, DeviceIdentity, UInt16) async throws -> Void) async throws {
+    private func withSession(
+        keyStore: InMemoryKeyStore = InMemoryKeyStore(),
+        _ body: (HostSession, DeviceIdentity, UInt16) async throws -> Void
+    ) async throws {
         try await TestIdentity.withIdentities(["Session Mac", "Session Phone"]) { identities in
             let host = identities[0]
             let environment = HostEnvironment(
-                loadIdentity: { _ in host }, keyStore: InMemoryKeyStore(), displayName: { "Session Mac" },
+                loadIdentity: { _ in host }, keyStore: keyStore, displayName: { "Session Mac" },
                 invitationHost: { "127.0.0.1" }, serviceType: nil, port: .any, clock: { Date() },
                 limits: ServerHarness.shortLimits
             )
@@ -98,6 +101,25 @@ struct HostSessionPairingTests {
             try session.revoke(session.pairedDevices[0])
 
             #expect(session.pairedDevices.isEmpty)
+        }
+    }
+
+    @Test func damagedPairedListIsReportedAndCanBeResetExplicitly() async throws {
+        let keyStore = InMemoryKeyStore([HostEnvironment.pairedDevicesKey: Data("garbage".utf8)])
+        try await withSession(keyStore: keyStore) { session, _, _ in
+            #expect(session.pairedDevicesIssue?.contains("damaged") == true)
+            #expect(session.pairedDevices.isEmpty)
+
+            try session.resetPairedDevices()
+
+            #expect(session.pairedDevicesIssue == nil)
+            #expect(try keyStore.data(forKey: HostEnvironment.pairedDevicesKey) == nil)
+        }
+    }
+
+    @Test func healthyPairedListHasNoIssue() async throws {
+        try await withSession { session, _, _ in
+            #expect(session.pairedDevicesIssue == nil)
         }
     }
 }

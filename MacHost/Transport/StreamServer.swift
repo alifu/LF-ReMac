@@ -25,7 +25,7 @@ enum StreamServerEvent: Equatable, Sendable {
 /// Authorization (see `ConnectionAuthorizer`): the TLS verify block admits a client key only if it
 /// is paired or a pairing window is open; once `.ready`, the verified fingerprint decides the role.
 /// Only a paired connection can become the active session (a newer one replaces the older); an
-/// unpaired one is kept apart, capped, timed out, gets no video and may only send `pairRequest`.
+/// unpaired one is kept apart, capped (in total and per remote address), timed out, gets no video and may only send `pairRequest`.
 ///
 /// All mutable state lives on `queue`; public methods are safe to call from any thread.
 final class StreamServer: @unchecked Sendable {
@@ -157,13 +157,14 @@ final class StreamServer: @unchecked Sendable {
     }
 
     private func accept(_ connection: NWConnection) {
-        let handshaking = others.values.filter { $0.role == .handshaking }.count
-        guard handshaking < limits.maxHandshaking else {
-            logger.notice("Too many handshakes in progress; refusing a connection")
+        let peer = PeerConnection(connection: connection)
+        let inProgress = others.values.filter { $0.role == .handshaking }.map(\.source)
+        let admission = HandshakeAdmission.decide(for: peer.source, inProgress: inProgress, limits: limits)
+        guard admission == .admitted else {
+            logger.notice("Refusing a connection: \(String(describing: admission), privacy: .public)")
             connection.cancel()
             return
         }
-        let peer = PeerConnection(connection: connection)
         others[ObjectIdentifier(peer)] = peer
         connection.stateUpdateHandler = { [weak self, weak peer] state in
             guard let self, let peer else { return }

@@ -19,21 +19,25 @@ extension StreamServer {
 
     private func authorize(_ peer: PeerConnection) {
         guard peer.role == .handshaking else { return }
+        let pairing = others.values.filter(\.isPairing)
         let decision = ConnectionAuthorizer.authorize(
             peer: TLSParameters.peerFingerprint(of: peer.connection),
             hostFingerprint: identity.fingerprint,
             isPaired: { store.contains($0) },
             isPairingOpen: coordinator.isOpen,
-            pairingConnections: others.values.filter(\.isPairing).count,
-            maxPairingConnections: limits.maxPairingConnections
+            pairingConnections: pairing.count,
+            maxPairingConnections: limits.maxPairingConnections,
+            pairingConnectionsFromAddress: pairing.filter { $0.source == peer.source }.count,
+            maxPairingConnectionsPerAddress: limits.maxPairingConnectionsPerAddress
         )
         switch decision {
         case .paired(let fingerprint):
             activate(peer, fingerprint: fingerprint)
         case .pairing(let fingerprint):
             peer.becomePairing(fingerprint)
+            // A timeout only drops the connection; it never uses up a pairing attempt.
             peer.setDeadline(after: limits.pairRequestTimeout, on: queue) { [weak self] in
-                self?.logger.notice("Unpaired iPhone sent no pairing request in time")
+                self?.logger.notice("Unpaired device sent no pairing request in time")
                 self?.continuation.yield(.pairingFailed(.timedOut))
             }
             logger.info("Unpaired iPhone connected during the pairing window")
@@ -131,9 +135,10 @@ extension StreamServer {
         }
     }
 
+    /// Undecodable, oversized or disallowed traffic: dropped without using up a pairing attempt.
     private func rejectProtocolViolation(from peer: PeerConnection) {
-        if case .pairing(let fingerprint) = peer.role {
-            continuation.yield(.pairingFailed(responder.protocolViolation(from: fingerprint)))
+        if peer.isPairing {
+            continuation.yield(.pairingFailed(.malformedRequest))
         }
         peer.cancel()
     }

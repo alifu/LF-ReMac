@@ -3,7 +3,9 @@ import Security
 
 /// `KeyStore` backed by generic-password Keychain items (`service` = namespace, `account` = key).
 ///
-/// Items are `kSecAttrAccessibleAfterFirstUnlock` so a locked-but-booted device can still connect.
+/// Items are `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`: a locked-but-booted device can still
+/// connect, and pairing data never travels in backups or to another device (the macOS file keychain
+/// ignores the attribute).
 /// On macOS this uses the file-based login keychain (no data-protection keychain entitlement needed);
 /// on iOS it uses the app's keychain access group.
 public struct KeychainKeyStore: KeyStore {
@@ -68,7 +70,7 @@ public struct KeychainKeyStore: KeyStore {
     private func add(_ data: Data, query: [CFString: Any]) throws(KeyStoreError) {
         var attributes = query
         attributes[kSecValueData] = data
-        attributes[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlock
+        attributes[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let status = SecItemAdd(attributes as CFDictionary, nil)
         guard status == errSecSuccess else { throw .keychain(status) }
     }

@@ -63,6 +63,9 @@ public enum TLSParameters {
         sec_protocol_options_set_min_tls_protocol_version(options, .TLSv13)
         sec_protocol_options_set_local_identity(options, localIdentity)
         sec_protocol_options_set_peer_authentication_required(options, true)
+        // No session tickets / PSK resumption: every connection runs a full handshake with
+        // CertificateVerify, so the verify block always judges a freshly proven key.
+        sec_protocol_options_set_tls_resumption_enabled(options, false)
         sec_protocol_options_set_verify_block(options, { _, trust, complete in
             // Fail closed: no certificate, unsupported key or unknown fingerprint all reject.
             let fingerprint = peerFingerprint(from: trust)

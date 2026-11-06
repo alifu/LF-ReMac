@@ -7,8 +7,10 @@ enum PairingRejection: Error, Equatable, Sendable {
     case attempt(PairingFailure)
     /// The proof was valid but the device could not be saved (the secret is used up regardless).
     case couldNotSave
-    /// The peer did not send a pairing request in time.
+    /// The peer did not send a pairing request in time. Does not use up an attempt.
     case timedOut
+    /// The peer sent something other than a well-formed `pairRequest`. Does not use up an attempt.
+    case malformedRequest
 }
 
 /// Host side of one pairing request: run the attempt, persist the device, build the reply.
@@ -23,10 +25,12 @@ struct PairingResponder: Sendable {
     let store: PairedDeviceStore
     let hostName: String
 
+    /// Only a well-formed request reaches the pairing session, so only a wrong proof (or the
+    /// window's own state) can count against the attempt budget; junk is just rejected.
     /// - Parameter clientFingerprint: the peer's key as observed in the TLS handshake.
     func respond(to frame: Frame, from clientFingerprint: DeviceFingerprint) -> Outcome {
         guard let request = try? PairingMessageCoding.request(from: frame) else {
-            return .rejected(.attempt(coordinator.recordFailedAttempt(from: clientFingerprint)))
+            return .rejected(.malformedRequest)
         }
         let result = coordinator.attempt(
             proof: request.proof, clientFingerprint: clientFingerprint, deviceName: request.deviceName
@@ -37,11 +41,6 @@ struct PairingResponder: Sendable {
         case .success(let acceptance):
             return accept(acceptance)
         }
-    }
-
-    /// Unusable traffic (wrong type, oversized, undecodable) from an unpaired peer.
-    func protocolViolation(from clientFingerprint: DeviceFingerprint) -> PairingRejection {
-        .attempt(coordinator.recordFailedAttempt(from: clientFingerprint))
     }
 
     private func accept(_ acceptance: PairingAcceptance) -> Outcome {

@@ -43,8 +43,10 @@ extension PairingRejection {
     /// Text for the pairing window. Deliberately says nothing about how close a guess was.
     var userMessage: String {
         switch self {
-        case .attempt(.invalidProof), .attempt(.invalidRequest):
-            "An iPhone tried to pair with a wrong code."
+        case .attempt(.invalidProof):
+            "A device tried to pair with a wrong code."
+        case .attempt(.invalidRequest), .malformedRequest:
+            "A device sent an invalid pairing request."
         case .attempt(.expired):
             "The pairing code expired. Start again."
         case .attempt(.tooManyAttempts):
@@ -54,7 +56,7 @@ extension PairingRejection {
         case .couldNotSave:
             "The iPhone could not be saved. Start again."
         case .timedOut:
-            "An iPhone connected but did not finish pairing."
+            "A device connected but did not finish pairing."
         }
     }
 }

@@ -14,11 +14,11 @@ final class MismatchFlag: @unchecked Sendable {
 }
 
 /// Host/port of an `.hostPort` endpoint as plain values (for "last known address").
-struct RemoteAddress {
-    let host: String?
-    let port: UInt16?
+public struct RemoteAddress: Equatable, Sendable {
+    public let host: String?
+    public let port: UInt16?
 
-    init(_ endpoint: NWEndpoint?) {
+    public init(_ endpoint: NWEndpoint?) {
         guard case .hostPort(let host, let port)? = endpoint else {
             self.host = nil
             self.port = nil

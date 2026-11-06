@@ -69,13 +69,4 @@ final class PairingCoordinator: Sendable {
             return outcome.result
         }
     }
-
-    /// Counts unusable pairing traffic from an unpaired peer (malformed request, wrong frame type,
-    /// oversized frame) as a failed attempt, so it uses up the same 3-attempt budget.
-    func recordFailedAttempt(from clientFingerprint: DeviceFingerprint) -> PairingFailure {
-        // An empty name and proof always fail with `.invalidRequest` (or the window's own state).
-        let result = attempt(proof: Data(), clientFingerprint: clientFingerprint, deviceName: "")
-        guard case .failure(let failure) = result else { return .invalidRequest }
-        return failure
-    }
 }

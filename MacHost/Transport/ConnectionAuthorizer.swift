@@ -15,6 +15,8 @@ enum ConnectionAuthorization: Equatable, Sendable {
         case ownFingerprint
         case notPaired
         case tooManyPairingConnections
+        /// This remote address already holds its pairing-role connection.
+        case tooManyPairingConnectionsFromAddress
     }
 }
 
@@ -25,13 +27,18 @@ enum ConnectionAuthorizer {
         isPaired: (DeviceFingerprint) -> Bool,
         isPairingOpen: Bool,
         pairingConnections: Int,
-        maxPairingConnections: Int
+        maxPairingConnections: Int,
+        pairingConnectionsFromAddress: Int,
+        maxPairingConnectionsPerAddress: Int
     ) -> ConnectionAuthorization {
         guard let peer else { return .refused(.noPeerCertificate) }
         guard !peer.constantTimeEquals(hostFingerprint) else { return .refused(.ownFingerprint) }
         if isPaired(peer) { return .paired(peer) }
         guard isPairingOpen else { return .refused(.notPaired) }
         guard pairingConnections < maxPairingConnections else { return .refused(.tooManyPairingConnections) }
+        guard pairingConnectionsFromAddress < maxPairingConnectionsPerAddress else {
+            return .refused(.tooManyPairingConnectionsFromAddress)
+        }
         return .pairing(peer)
     }
 }

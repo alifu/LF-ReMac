@@ -51,7 +51,7 @@ struct IdentityKeychain {
                 kSecAttrIsPermanent: true,
                 kSecAttrApplicationTag: keyTag,
                 kSecAttrLabel: label,
-                kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock
+                kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             ] as [CFString: Any],
             kSecPublicKeyAttrs: [kSecAttrIsPermanent: false] as [CFString: Any]
         ]
@@ -82,7 +82,7 @@ struct IdentityKeychain {
         let attributes: [CFString: Any] = [
             kSecValueRef: certificate,
             kSecAttrLabel: label,
-            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         ]
         let status = SecItemAdd(attributes as CFDictionary, nil)
         guard status == errSecSuccess else { throw .keychain(status) }

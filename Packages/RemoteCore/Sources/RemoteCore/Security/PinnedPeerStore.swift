@@ -3,7 +3,8 @@ import os
 
 public enum PeerStoreError: Error, Equatable, Sendable {
     case keyStore(KeyStoreError)
-    /// Stored bytes could not be decoded; the store treats them as empty.
+    /// Stored bytes could not be decoded. Reads see an empty list; writes are refused until
+    /// `resetCorruptedStore()` so the damaged data is never overwritten silently.
     case corrupted
     case encodingFailed
     case tooManyPeers
@@ -18,12 +19,19 @@ public struct PeerStoreSnapshot<Peer: PinnedPeer>: Sendable {
 public typealias PairedDeviceStore = PinnedPeerStore<PairedDevice>
 public typealias PairedHostStore = PinnedPeerStore<PairedHost>
 
-/// Persists pinned peers as versioned JSON in a `KeyStore`. Thread-safe: every operation reads the
-/// current value under a lock, so the synchronous `contains` can back a TLS verify block.
+/// Persists pinned peers as versioned JSON in a `KeyStore`, with an in-memory snapshot so the
+/// synchronous `contains` that backs a TLS verify block never touches the Keychain once loaded.
+/// Thread-safe: the snapshot and every write are guarded by one lock, so a revocation is visible
+/// to the next `contains` as soon as `remove` returns.
 ///
-/// Failure policy: corrupted data reads as empty (reported in `load().issue` and logged, never a
-/// crash); a Keychain *read error* is not treated as empty for writes, so a transient failure cannot
-/// wipe the list. `contains` fails closed.
+/// Failure policy:
+/// - a Keychain *read error* is never cached: `contains` fails closed, writes throw, and the next
+///   call retries the read;
+/// - corrupted data reads as empty with `.corrupted` (logged, never a crash) and refuses writes
+///   until `resetCorruptedStore()`;
+/// - a failed write drops the snapshot so the next call reloads what the Keychain really holds.
+///
+/// The snapshot assumes this instance is the only writer of `key` in the process.
 public final class PinnedPeerStore<Peer: PinnedPeer>: Sendable {
     public static var maxPeers: Int { 32 }
     static var formatVersion: Int { 1 }
@@ -35,7 +43,8 @@ public final class PinnedPeerStore<Peer: PinnedPeer>: Sendable {
 
     private let keyStore: any KeyStore
     private let key: String
-    private let lock = OSAllocatedUnfairLock()
+    /// nil = not loaded (or last load/write failed); a cached snapshot never has a `.keyStore` issue.
+    private let cache = OSAllocatedUnfairLock<PeerStoreSnapshot<Peer>?>(initialState: nil)
     private let logger = AppLog.logger(category: "peer-store")
 
     public init(keyStore: any KeyStore, key: String) {
@@ -44,7 +53,7 @@ public final class PinnedPeerStore<Peer: PinnedPeer>: Sendable {
     }
 
     public func load() -> PeerStoreSnapshot<Peer> {
-        lock.withLock { snapshot() }
+        cache.withLock { current(&$0) }
     }
 
     public func all() -> [Peer] {
@@ -61,27 +70,61 @@ public final class PinnedPeerStore<Peer: PinnedPeer>: Sendable {
 
     /// Adds `peer`, replacing any entry with the same fingerprint.
     public func add(_ peer: Peer) throws(PeerStoreError) {
-        try lock.locked { () throws(PeerStoreError) in
-            let others = try currentPeersForWrite().filter { $0.fingerprint != peer.fingerprint }
+        try mutate { peers throws(PeerStoreError) in
+            let others = peers.filter { $0.fingerprint != peer.fingerprint }
             guard others.count < Self.maxPeers else { throw .tooManyPeers }
-            try write(others + [peer])
+            return others + [peer]
         }
     }
 
     /// Removes the entry with `fingerprint`; succeeds if there is none.
     public func remove(_ fingerprint: DeviceFingerprint) throws(PeerStoreError) {
-        try lock.locked { () throws(PeerStoreError) in
-            try write(try currentPeersForWrite().filter { $0.fingerprint != fingerprint })
-        }
+        try mutate { peers in peers.filter { $0.fingerprint != fingerprint } }
     }
 
     public func removeAll() throws(PeerStoreError) {
-        try lock.locked { () throws(PeerStoreError) in try removeStored() }
+        try cache.lockedState { cached throws(PeerStoreError) in
+            try replaceStored(with: nil, cached: &cached)
+        }
+    }
+
+    /// Deletes stored data that could not be decoded (call only after the user agreed to lose the
+    /// list). Does nothing when the data is fine; throws if the Keychain cannot be read.
+    public func resetCorruptedStore() throws(PeerStoreError) {
+        try cache.lockedState { cached throws(PeerStoreError) in
+            let snapshot = current(&cached)
+            switch snapshot.issue {
+            case .corrupted:
+                logger.notice("Resetting corrupted pinned peers data")
+                try replaceStored(with: nil, cached: &cached)
+            case .keyStore(let error):
+                throw .keyStore(error)
+            case .encodingFailed, .tooManyPeers, nil:
+                return
+            }
+        }
     }
 
     // MARK: Private (call with the lock held)
 
-    private func snapshot() -> PeerStoreSnapshot<Peer> {
+    private func mutate(_ change: ([Peer]) throws(PeerStoreError) -> [Peer]) throws(PeerStoreError) {
+        try cache.lockedState { cached throws(PeerStoreError) in
+            let snapshot = current(&cached)
+            if let issue = snapshot.issue { throw issue }
+            try replaceStored(with: try change(snapshot.peers), cached: &cached)
+        }
+    }
+
+    /// The cached snapshot, loading it first if needed. Only successful loads are cached.
+    private func current(_ cached: inout PeerStoreSnapshot<Peer>?) -> PeerStoreSnapshot<Peer> {
+        if let cached { return cached }
+        let snapshot = read()
+        if case .keyStore = snapshot.issue { return snapshot }
+        cached = snapshot
+        return snapshot
+    }
+
+    private func read() -> PeerStoreSnapshot<Peer> {
         let data: Data?
         do {
             data = try keyStore.data(forKey: key)
@@ -91,16 +134,21 @@ public final class PinnedPeerStore<Peer: PinnedPeer>: Sendable {
         }
         guard let data else { return PeerStoreSnapshot(peers: [], issue: nil) }
         guard let peers = Self.decode(data) else {
-            logger.error("Pinned peers data is corrupted; treating it as empty")
+            logger.error("Pinned peers data is corrupted; treating it as empty and refusing writes")
             return PeerStoreSnapshot(peers: [], issue: .corrupted)
         }
         return PeerStoreSnapshot(peers: peers, issue: nil)
     }
 
-    private func currentPeersForWrite() throws(PeerStoreError) -> [Peer] {
-        let current = snapshot()
-        if case .keyStore(let error) = current.issue { throw .keyStore(error) }
-        return current.peers
+    /// Writes `peers` (nil deletes the item) and updates the snapshot; on failure drops it.
+    private func replaceStored(with peers: [Peer]?, cached: inout PeerStoreSnapshot<Peer>?) throws(PeerStoreError) {
+        cached = nil
+        if let peers {
+            try write(peers)
+        } else {
+            try removeStored()
+        }
+        cached = PeerStoreSnapshot(peers: peers ?? [], issue: nil)
     }
 
     private func write(_ peers: [Peer]) throws(PeerStoreError) {

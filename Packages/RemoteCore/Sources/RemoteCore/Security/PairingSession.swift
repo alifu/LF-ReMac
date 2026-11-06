@@ -8,7 +8,8 @@ public enum PairingFailure: Error, Equatable, Sendable {
     /// The session was invalidated after `PairingSession.maxFailedAttempts` failures.
     case tooManyAttempts
     case invalidProof
-    /// Malformed request (bad name, client fingerprint equals the host's). Counts as a failure.
+    /// Malformed request (bad name, client fingerprint equals the host's). Does NOT use up an
+    /// attempt: only a well-formed request with a wrong proof does, so junk cannot close the window.
     case invalidRequest
 }
 
@@ -29,7 +30,7 @@ public struct PairingAttemptOutcome: Sendable {
 /// owner (one serial context, e.g. the server queue or an actor) simply replaces its copy.
 ///
 /// Rules (plan, Phase 4): one random secret per window, valid for `lifetime` (2 minutes), single use,
-/// invalidated after `maxFailedAttempts` (3) failures, closed by `cancelled()`.
+/// invalidated after `maxFailedAttempts` (3) wrong proofs, closed by `cancelled()`.
 public struct PairingSession: Sendable {
     public static let lifetime: TimeInterval = 120
     public static let maxFailedAttempts = 3
@@ -112,7 +113,7 @@ private struct ActiveWindow {
         proof: Data, client: DeviceFingerprint, server: DeviceFingerprint, deviceName: String, now: Date
     ) -> PairingAttemptOutcome {
         guard DeviceName.isValid(deviceName), !client.constantTimeEquals(server) else {
-            return failed(.invalidRequest)
+            return PairingAttemptOutcome(session: unchanged, result: .failure(.invalidRequest))
         }
         guard PairingProof.isValidClientProof(proof, secret: secret, client: client, server: server) else {
             return failed(.invalidProof)
@@ -123,6 +124,10 @@ private struct ActiveWindow {
         )
         // Single use: the secret is gone as soon as it has paired one device.
         return PairingAttemptOutcome(session: PairingSession(), result: .success(acceptance))
+    }
+
+    private var unchanged: PairingSession {
+        PairingSession(state: .active(secret: secret, expiresAt: expiresAt, failedAttempts: failedAttempts))
     }
 
     private func failed(_ failure: PairingFailure) -> PairingAttemptOutcome {

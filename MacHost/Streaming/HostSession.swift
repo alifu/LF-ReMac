@@ -21,6 +21,9 @@ final class HostSession {
     /// Latest non-fatal pairing problem while the window stays open (e.g. one wrong code).
     private(set) var pairingNotice: String?
     private(set) var pairedDevices: [PairedDevice] = []
+    /// Why the paired-iPhones list could not be read (nil when it is fine). While the list is
+    /// damaged nothing can be paired; offer `resetPairedDevices()` after the user confirms.
+    private(set) var pairedDevicesIssue: String?
     /// Name of the paired iPhone currently streaming, if any.
     private(set) var connectedDeviceName: String?
 
@@ -135,7 +138,27 @@ final class HostSession {
     }
 
     func refreshPairedDevices() {
-        pairedDevices = store.all().sorted { $0.pairedAt < $1.pairedAt }
+        let snapshot = store.load()
+        pairedDevices = snapshot.peers.sorted { $0.pairedAt < $1.pairedAt }
+        pairedDevicesIssue = snapshot.issue.map(Self.message(for:))
+    }
+
+    /// Deletes a damaged paired-iPhones list so pairing works again. Call only after the user
+    /// agreed; does nothing when the list is fine.
+    func resetPairedDevices() throws(PeerStoreError) {
+        defer { refreshPairedDevices() }
+        try store.resetCorruptedStore()
+    }
+
+    private static func message(for issue: PeerStoreError) -> String {
+        switch issue {
+        case .corrupted:
+            "The list of paired iPhones is damaged. Reset it, then pair your iPhones again."
+        case .keyStore:
+            "The list of paired iPhones could not be read from the Keychain."
+        case .encodingFailed, .tooManyPeers:
+            "The list of paired iPhones could not be read."
+        }
     }
 
     private func scheduleExpiry(at expiresAt: Date) {
@@ -197,6 +220,7 @@ final class HostSession {
             refreshPairedDevices()
         case .pairingFailed(let rejection):
             handlePairingFailure(rejection)
+            if rejection == .couldNotSave { refreshPairedDevices() }
         case .failed(let message):
             await stopPipeline()
             state = .failed(message)

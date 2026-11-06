@@ -9,6 +9,48 @@ private final class FailingKeyStore: KeyStore {
     func removeData(forKey key: String) throws(KeyStoreError) { throw .keychain(-25308) }
 }
 
+/// Forwards to an in-memory store, counts reads and can fail reads or writes on demand.
+private final class CountingKeyStore: KeyStore, @unchecked Sendable {
+    private let backing: InMemoryKeyStore
+    private let lock = NSLock()
+    private var readCount = 0
+    private var shouldFailReads = false
+    private var shouldFailWrites = false
+
+    init(backing: InMemoryKeyStore = InMemoryKeyStore()) {
+        self.backing = backing
+    }
+
+    var reads: Int { lock.withLock { readCount } }
+    var failReads: Bool {
+        get { lock.withLock { shouldFailReads } }
+        set { lock.withLock { shouldFailReads = newValue } }
+    }
+    var failWrites: Bool {
+        get { lock.withLock { shouldFailWrites } }
+        set { lock.withLock { shouldFailWrites = newValue } }
+    }
+
+    func data(forKey key: String) throws(KeyStoreError) -> Data? {
+        let fail = lock.withLock { () -> Bool in
+            readCount += 1
+            return shouldFailReads
+        }
+        if fail { throw .keychain(-25308) }
+        return try backing.data(forKey: key)
+    }
+
+    func set(_ data: Data, forKey key: String) throws(KeyStoreError) {
+        if failWrites { throw .keychain(-25308) }
+        try backing.set(data, forKey: key)
+    }
+
+    func removeData(forKey key: String) throws(KeyStoreError) {
+        if failWrites { throw .keychain(-25308) }
+        try backing.removeData(forKey: key)
+    }
+}
+
 struct PinnedPeerStoreTests {
     private let keyStore = InMemoryKeyStore()
     private let key = "paired-devices"
@@ -67,13 +109,85 @@ struct PinnedPeerStoreTests {
         #expect(!store.contains(Fixtures.phone))
     }
 
-    @Test func addingAfterCorruptionStartsAFreshList() throws {
-        try keyStore.set(Data("garbage".utf8), forKey: key)
+    @Test func corruptedDataRefusesWritesUntilExplicitlyReset() throws {
+        let garbage = Data("garbage".utf8)
+        try keyStore.set(garbage, forKey: key)
+        let corrupted = store
 
+        #expect(throws: PeerStoreError.corrupted) { try corrupted.add(device(Fixtures.phone)) }
+        #expect(throws: PeerStoreError.corrupted) { try corrupted.remove(Fixtures.phone) }
+        #expect(try keyStore.data(forKey: key) == garbage)
+
+        try corrupted.resetCorruptedStore()
+        try corrupted.add(device(Fixtures.phone))
+
+        #expect(corrupted.load().issue == nil)
+        #expect(corrupted.all() == [device(Fixtures.phone)])
+    }
+
+    @Test func resetLeavesHealthyDataAloneAndFailsOnKeychainErrors() throws {
         try store.add(device(Fixtures.phone))
 
-        #expect(store.load().issue == nil)
-        #expect(store.all() == [device(Fixtures.phone)])
+        try store.resetCorruptedStore()
+
+        #expect(store.contains(Fixtures.phone))
+        let failing = PairedDeviceStore(keyStore: FailingKeyStore(), key: key)
+        #expect(throws: PeerStoreError.keyStore(.keychain(-25308))) { try failing.resetCorruptedStore() }
+    }
+
+    @Test func lookupsAfterTheFirstLoadDoNotTouchTheKeyStore() throws {
+        let counting = CountingKeyStore()
+        let cached = PairedDeviceStore(keyStore: counting, key: key)
+        try cached.add(device(Fixtures.phone))
+        let readsAfterAdd = counting.reads
+
+        for _ in 0..<10 { _ = cached.contains(Fixtures.phone) }
+        _ = cached.peer(with: Fixtures.phone)
+        _ = cached.all()
+
+        #expect(readsAfterAdd == 1)
+        #expect(counting.reads == 1)
+    }
+
+    @Test func revocationIsVisibleToTheNextLookupAtOnce() throws {
+        let cached = store
+        try cached.add(device(Fixtures.phone))
+        #expect(cached.contains(Fixtures.phone))
+
+        try cached.remove(Fixtures.phone)
+
+        #expect(!cached.contains(Fixtures.phone))
+        try cached.add(device(Fixtures.attacker))
+        try cached.removeAll()
+        #expect(!cached.contains(Fixtures.attacker))
+    }
+
+    @Test func keychainReadFailureIsNotCachedAndTheNextCallRetries() throws {
+        let flaky = CountingKeyStore(backing: keyStore)
+        try PairedDeviceStore(keyStore: keyStore, key: key).add(device(Fixtures.phone))
+        flaky.failReads = true
+        let cached = PairedDeviceStore(keyStore: flaky, key: key)
+
+        #expect(!cached.contains(Fixtures.phone))
+        #expect(throws: PeerStoreError.keyStore(.keychain(-25308))) { try cached.add(device(Fixtures.attacker)) }
+        flaky.failReads = false
+
+        #expect(cached.contains(Fixtures.phone))
+        #expect(cached.load().issue == nil)
+    }
+
+    @Test func failedWriteDropsTheSnapshotAndReloads() throws {
+        let flaky = CountingKeyStore(backing: keyStore)
+        let cached = PairedDeviceStore(keyStore: flaky, key: key)
+        try cached.add(device(Fixtures.phone))
+        flaky.failWrites = true
+
+        #expect(throws: PeerStoreError.keyStore(.keychain(-25308))) { try cached.remove(Fixtures.phone) }
+        let readsBefore = flaky.reads
+        flaky.failWrites = false
+
+        #expect(cached.contains(Fixtures.phone))
+        #expect(flaky.reads == readsBefore + 1)
     }
 
     @Test func duplicateFingerprintsInStoredDataAreTreatedAsCorrupted() throws {

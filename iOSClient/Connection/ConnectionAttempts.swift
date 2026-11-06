@@ -9,6 +9,8 @@ struct LinkCloseSummary: Equatable, Sendable {
     let canTryAnotherAddress: Bool
     /// Whoever answered presented a key other than the paired Mac's.
     let sawWrongHostKey: Bool
+    /// The Mac closed the stream cleanly (as opposed to a network failure).
+    var closedByHost = false
 }
 
 /// Walks a paired Mac's candidate addresses: a failed attempt (wrong key, unreachable, ...) moves

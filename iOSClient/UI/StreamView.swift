@@ -35,6 +35,11 @@ struct StreamView: View {
         .overlay(alignment: .topTrailing) {
             controls.padding()
         }
+        .overlay(alignment: .bottom) {
+            if let status = client.reconnect {
+                ReconnectBanner(status: status).padding()
+            }
+        }
         .background(.black)
         .statusBarHidden()
         .onChange(of: pointerMode) { _, mode in pointer.mode = mode }
@@ -59,5 +64,20 @@ struct StreamView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.black.opacity(0.4), in: Capsule())
+    }
+}
+
+/// Shown over the last picture while the client redials the Mac.
+private struct ReconnectBanner: View {
+    let status: ReconnectStatus
+
+    var body: some View {
+        Label("Connection lost. Reconnecting (\(status.attempt) of \(status.total))…", systemImage: "wifi.exclamationmark")
+            .font(.callout)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.black.opacity(0.6), in: Capsule())
+            .accessibilityElement(children: .combine)
     }
 }

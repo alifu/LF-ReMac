@@ -24,6 +24,9 @@ final class StreamClient {
     private(set) var stats = StreamStats.empty
     /// Pixel size of the Mac's picture, known once the first video config arrives.
     private(set) var videoSize: CGSize = .zero
+    /// Set while the stream dropped by itself and the client is redialling; `state` stays
+    /// `.connected` so the picture stays on screen under a banner.
+    private(set) var reconnect: ReconnectStatus?
     let renderer: VideoRenderer
 
     @ObservationIgnored private let collector: StatsCollector
@@ -32,6 +35,10 @@ final class StreamClient {
     private let logger = AppLog.logger(category: "client")
     private var link: StreamLink?
     @ObservationIgnored private var attempts = ConnectionAttempts(candidates: [])
+    @ObservationIgnored private var reconnectPolicy = ReconnectPolicy()
+    @ObservationIgnored private var reconnectTask: Task<Void, Never>?
+    @ObservationIgnored private var lastCandidates: [NWEndpoint] = []
+    @ObservationIgnored private var currentEndpoint: NWEndpoint?
 
     init(credentials: PhoneCredentials) {
         self.credentials = credentials
@@ -62,6 +69,7 @@ final class StreamClient {
     func connect(to host: PairedHost, candidates: [NWEndpoint]) {
         disconnect()
         state = .connecting(host.name)
+        lastCandidates = candidates
         let (step, attempts) = ConnectionAttempts(candidates: candidates).start()
         self.attempts = attempts
         perform(step, host: host)
@@ -80,6 +88,7 @@ final class StreamClient {
         renderer.reset()
         collector.reset()
         guard let link = makeLink(endpoint: endpoint, host: host) else { return }
+        currentEndpoint = endpoint
         link.onStateChange = { [weak self, weak link] newState in
             Task { @MainActor in
                 guard let self, let link, self.link === link else { return }
@@ -95,6 +104,10 @@ final class StreamClient {
     }
 
     func disconnect() {
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        reconnectPolicy = ReconnectPolicy()
+        reconnect = nil
         attempts = ConnectionAttempts(candidates: [])
         stopStatsLoop()
         link?.close()
@@ -133,6 +146,8 @@ final class StreamClient {
         switch linkState {
         case .connected(let address):
             attempts = ConnectionAttempts(candidates: [])
+            reconnectPolicy = ReconnectPolicy()
+            reconnect = nil
             state = .connected(host.name)
             startStatsLoop()
             remember(address, for: host)
@@ -143,9 +158,55 @@ final class StreamClient {
             stats = .empty
             let (step, attempts) = attempts.next(after: summary)
             self.attempts = attempts
-            if case .dial = step { logger.notice("Trying the paired Mac's next address") }
-            perform(step, host: host)
+            if case .dial = step {
+                logger.notice("Trying the paired Mac's next address")
+                perform(step, host: host)
+            } else if shouldReconnect(after: summary) {
+                scheduleReconnect(host: host, fallback: step)
+            } else {
+                perform(step, host: host)
+            }
         }
+    }
+
+    // MARK: - Reconnecting
+
+    /// Redial only a stream that was up (or a reconnect cycle that is already running).
+    private func shouldReconnect(after summary: LinkCloseSummary) -> Bool {
+        let isUp: Bool
+        if case .connected = state { isUp = true } else { isUp = false }
+        guard isUp || reconnect != nil else { return false }
+        return ReconnectPolicy.isRecoverable(summary, wasEstablished: reconnect == nil)
+    }
+
+    /// Waits out the next backoff, then redials; gives up with `fallback` once the tries are used.
+    private func scheduleReconnect(host: PairedHost, fallback: ConnectionAttempts.Step) {
+        guard let next = reconnectPolicy.next() else {
+            logger.notice("Giving up reconnecting")
+            reconnect = nil
+            state = .failed("Lost the connection to \(host.name) and could not get it back.")
+            return
+        }
+        reconnectPolicy = next.policy
+        reconnect = next.status
+        logger.notice("Reconnecting, try \(next.status.attempt) of \(next.status.total)")
+        reconnectTask?.cancel()
+        reconnectTask = Task { [weak self] in
+            try? await Task.sleep(for: next.delay)
+            guard !Task.isCancelled, let self else { return }
+            self.redial(host)
+        }
+    }
+
+    private func redial(_ host: PairedHost) {
+        // Try the address that worked last, then the rest; use the stored Mac in case its address changed.
+        let current = credentials.hostStore.peer(with: host.fingerprint) ?? host
+        let candidates = ([currentEndpoint].compactMap { $0 } + lastCandidates
+            + [PairedHostTarget.lastKnownEndpoint(of: current)].compactMap { $0 })
+            .reduce(into: [NWEndpoint]()) { if !$0.contains($1) { $0.append($1) } }
+        let (step, attempts) = ConnectionAttempts(candidates: candidates).start()
+        self.attempts = attempts
+        if case .dial(let endpoint) = step { dial(endpoint, host: host) } else { scheduleReconnect(host: host, fallback: step) }
     }
 
     /// Saves where the (verified, accepting) Mac was reached, for the next connection.

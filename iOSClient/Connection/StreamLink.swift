@@ -158,7 +158,8 @@ final class StreamLink: @unchecked Sendable {
         onStateChange?(.closed(LinkCloseSummary(
             message: LinkCloseClassifier.message(for: cause, history: history),
             canTryAnotherAddress: cause != .local && !history.receivedFrame,
-            sawWrongHostKey: history.sawWrongHostKey
+            sawWrongHostKey: history.sawWrongHostKey,
+            closedByHost: cause == .closedByHost
         )))
     }
 }

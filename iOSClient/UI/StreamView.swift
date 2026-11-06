@@ -75,6 +75,10 @@ struct StreamView: View {
                    systemImage: pointerMode == .trackpad ? "rectangle.and.hand.point.up.left" : "hand.point.up.left") {
                 pointerMode = pointerMode == .trackpad ? .direct : .trackpad
             }
+            Button(client.isAudioOn ? "Mute Mac sound" : "Play Mac sound",
+                   systemImage: client.isAudioOn ? "speaker.wave.2.fill" : "speaker.slash") {
+                client.setAudio(!client.isAudioOn)
+            }
             if client.displays.canChoose {
                 displayMenu
             }

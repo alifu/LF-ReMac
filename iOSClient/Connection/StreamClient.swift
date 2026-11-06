@@ -29,11 +29,16 @@ final class StreamClient {
     private(set) var reconnect: ReconnectStatus?
     /// The Mac's displays, once it has reported them; empty for a Mac that does not (or before it does).
     private(set) var displays = HostDisplays.none
+    /// Sound from the Mac is on. Off for a Mac never heard before; the choice is remembered per Mac.
+    private(set) var isAudioOn = false
     let renderer: VideoRenderer
 
     @ObservationIgnored private let collector: StatsCollector
     @ObservationIgnored private var statsTask: Task<Void, Never>?
     @ObservationIgnored private let credentials: PhoneCredentials
+    @ObservationIgnored private let audioPlayer = AudioPlayer()
+    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private var currentHost: PairedHost?
     private let logger = AppLog.logger(category: "client")
     private var link: StreamLink?
     @ObservationIgnored private var attempts = ConnectionAttempts(candidates: [])
@@ -42,8 +47,9 @@ final class StreamClient {
     @ObservationIgnored private var lastCandidates: [NWEndpoint] = []
     @ObservationIgnored private var currentEndpoint: NWEndpoint?
 
-    init(credentials: PhoneCredentials) {
+    init(credentials: PhoneCredentials, defaults: UserDefaults = .standard) {
         self.credentials = credentials
+        self.defaults = defaults
         let collector = StatsCollector()
         self.collector = collector
         renderer = VideoRenderer(statsCollector: collector)
@@ -108,6 +114,7 @@ final class StreamClient {
                 self.rememberWakeAddresses(info.wakeMACs, for: host)
             }
         }
+        link.onAudio = { [audioPlayer] frame in audioPlayer.handle(frame) }
         self.link = link
         link.start(chunkBytes: Self.receiveChunkBytes)
     }
@@ -121,6 +128,9 @@ final class StreamClient {
         stopStatsLoop()
         link?.close()
         link = nil
+        audioPlayer.setActive(false)
+        isAudioOn = false
+        currentHost = nil
         renderer.onKeyframeNeeded = nil
         renderer.onVideoSizeChange = nil
         stats = .empty
@@ -150,6 +160,35 @@ final class StreamClient {
         }
     }
 
+    /// Turns the Mac's sound on or off and remembers the choice for this Mac.
+    func setAudio(_ enabled: Bool) {
+        guard case .connected = state, let host = currentHost else { return }
+        defaults.set(enabled, forKey: Self.audioKey(for: host))
+        applyAudio(enabled)
+    }
+
+    private func applyAudio(_ enabled: Bool) {
+        guard let link else { return }
+        do {
+            link.send(try SessionMessageCoding.frame(for: AudioControl(enabled: enabled), timestampMicros: MonotonicClock.nowMicros()))
+        } catch {
+            logger.error("Could not encode audio choice: \(String(describing: error), privacy: .public)")
+            return
+        }
+        isAudioOn = enabled
+        audioPlayer.setActive(enabled)
+    }
+
+    /// A new (or re-established) stream starts silent on the Mac; bring back what the user chose last time.
+    private func restoreAudio(for host: PairedHost) {
+        currentHost = host
+        applyAudio(defaults.bool(forKey: Self.audioKey(for: host)))
+    }
+
+    private static func audioKey(for host: PairedHost) -> String {
+        "audioEnabled.\(host.fingerprint)"
+    }
+
     private func makeLink(endpoint: NWEndpoint, host: PairedHost) -> StreamLink? {
         do {
             let identity = try credentials.identity()
@@ -171,10 +210,12 @@ final class StreamClient {
             reconnect = nil
             state = .connected(host.name)
             startStatsLoop()
+            restoreAudio(for: host)
             remember(address, for: host)
         case .closed(let summary):
             logger.info("Connection closed")
             stopStatsLoop()
+            audioPlayer.setActive(false)
             link = nil
             stats = .empty
             let (step, attempts) = attempts.next(after: summary)

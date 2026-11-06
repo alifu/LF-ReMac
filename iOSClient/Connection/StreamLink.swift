@@ -27,6 +27,8 @@ final class StreamLink: @unchecked Sendable {
     private static let protocolVersion = 1
     /// Called on the link queue when the Mac reports its displays.
     var onHostInfo: (@Sendable (HostInfo) -> Void)?
+    /// Called on the link queue with each `audioConfig` and `audioFrame`.
+    var onAudio: (@Sendable (Frame) -> Void)?
     private var decoder = FrameDecoder(allowedTypes: ProtocolTypes.clientAcceptsFromHost)
     private var history = LinkHistory()
     private var readyAt: ContinuousClock.Instant?
@@ -138,6 +140,8 @@ final class StreamLink: @unchecked Sendable {
             recordRoundTrip(sentAtMicros: frame.timestampMicros)
         case .hostInfo:
             handleHostInfo(frame)
+        case .audioConfig, .audioFrame:
+            onAudio?(frame)
         default:
             renderer.handle(frame)
         }
@@ -146,7 +150,7 @@ final class StreamLink: @unchecked Sendable {
     /// Tells the Mac what this build understands. A Mac built before Phase 7 does not know this message type and
     /// drops the link, so update the Mac app first. (An older iPhone never sends it and keeps working.)
     private func sendHello() {
-        let hello = ClientHello(protocolVersion: Self.protocolVersion, capabilities: [.displays])
+        let hello = ClientHello(protocolVersion: Self.protocolVersion, capabilities: [.displays, .audio])
         do {
             let frame = try SessionMessageCoding.frame(for: hello, timestampMicros: MonotonicClock.nowMicros())
             connection.send(content: FrameEncoder.encode(frame), completion: .contentProcessed { _ in })

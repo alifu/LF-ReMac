@@ -6,6 +6,7 @@ struct PairedDevicesWindow: View {
     let session: HostSession
     @State private var pendingRevoke: PairedDevice?
     @State private var errorMessage: String?
+    @State private var isConfirmingReset = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -18,6 +19,12 @@ struct PairedDevicesWindow: View {
                     row(for: device)
                 }
             }
+            if let issue = session.pairedDevicesIssue {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(issue).font(.callout).foregroundStyle(.orange)
+                    Button("Reset Paired iPhones…", role: .destructive) { isConfirmingReset = true }
+                }
+            }
             if let errorMessage {
                 Text(errorMessage)
                     .font(.callout)
@@ -27,6 +34,11 @@ struct PairedDevicesWindow: View {
         .padding(20)
         .frame(minWidth: 360, minHeight: 240)
         .onAppear { session.refreshPairedDevices() }
+        .confirmationDialog("Reset the paired iPhones list?", isPresented: $isConfirmingReset, titleVisibility: .visible) {
+            Button("Reset and Forget All iPhones", role: .destructive) { resetList() }
+        } message: {
+            Text("The damaged list is erased. Every iPhone must pair again.")
+        }
         .confirmationDialog(
             "Revoke this iPhone?",
             isPresented: isConfirmingRevoke,
@@ -39,13 +51,23 @@ struct PairedDevicesWindow: View {
         }
     }
 
+    private func resetList() {
+        do {
+            try session.resetPairedDevices()
+            session.refreshPairedDevices()
+            errorMessage = nil
+        } catch {
+            errorMessage = "Could not reset the list: \(Self.describe(error))."
+        }
+    }
+
     private func row(for device: PairedDevice) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(device.name)
                         .font(.headline)
-                    if device.name == session.connectedDeviceName {
+                    if device.fingerprint == session.connectedDeviceFingerprint {
                         Text("Connected")
                             .font(.caption.weight(.semibold))
                             .padding(.horizontal, 6)

@@ -5,6 +5,8 @@ import SwiftUI
 /// Entry screen: connect to a paired Mac (pinned TLS), then show the stream.
 struct ConnectionView: View {
     private let credentials: PhoneCredentials
+    @State private var pairedHostsIssue: String?
+    @State private var isConfirmingReset = false
     @State private var client: StreamClient
     @State private var browser = HostBrowser()
     @State private var pairedHosts: [PairedHost] = []
@@ -32,6 +34,11 @@ struct ConnectionView: View {
         .onDisappear {
             browser.stop()
         }
+        .confirmationDialog("Reset the paired Macs list?", isPresented: $isConfirmingReset, titleVisibility: .visible) {
+            Button("Reset and Forget All Macs", role: .destructive) { resetPairedHosts() }
+        } message: {
+            Text("The damaged list is erased. You must pair each Mac again.")
+        }
         .sheet(item: $pairingRequest) { request in
             PairingSheet(
                 credentials: credentials,
@@ -48,11 +55,22 @@ struct ConnectionView: View {
         NavigationStack {
             List {
                 statusSection
+                issueSection
                 pairedSection
                 discoveredSection
             }
             .navigationTitle("LF-ReMac")
             .refreshable { reloadPairedHosts() }
+        }
+    }
+
+    @ViewBuilder
+    private var issueSection: some View {
+        if let issue = pairedHostsIssue {
+            Section {
+                Text(issue).font(.callout).foregroundStyle(.orange)
+                Button("Reset Paired Macs…", role: .destructive) { isConfirmingReset = true }
+            }
         }
     }
 
@@ -101,8 +119,8 @@ struct ConnectionView: View {
     @ViewBuilder
     private func pairedRow(_ host: PairedHost) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            if let endpoint = PairedHostTarget.endpoint(for: host, discovered: browser.hosts) {
-                Button(host.name) { client.connect(to: endpoint, host: host) }
+            if !PairedHostTarget.candidates(for: host, discovered: browser.hosts).isEmpty {
+                Button(host.name) { client.connect(to: host, discovered: browser.hosts) }
             } else {
                 LabeledContent(host.name, value: "Not found on this network")
             }
@@ -138,8 +156,14 @@ struct ConnectionView: View {
         }
     }
 
+    private func resetPairedHosts() {
+        try? credentials.resetPairedHosts()
+        reloadPairedHosts()
+    }
+
     private func reloadPairedHosts() {
         pairedHosts = credentials.hostStore.all().sorted { $0.name < $1.name }
+        pairedHostsIssue = credentials.pairedHostsIssue
     }
 }
 

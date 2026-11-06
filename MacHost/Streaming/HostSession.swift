@@ -26,6 +26,8 @@ final class HostSession {
     private(set) var pairedDevicesIssue: String?
     /// Name of the paired iPhone currently streaming, if any.
     private(set) var connectedDeviceName: String?
+    /// Key of the connected iPhone; identifies it even if two devices share a name.
+    private(set) var connectedDeviceFingerprint: DeviceFingerprint?
 
     @ObservationIgnored private let environment: HostEnvironment
     @ObservationIgnored private let store: PairedDeviceStore
@@ -98,6 +100,7 @@ final class HostSession {
         coordinator = nil
         eventLoop = nil
         connectedDeviceName = nil
+        connectedDeviceFingerprint = nil
         state = .stopped
     }
 
@@ -203,10 +206,12 @@ final class HostSession {
             state = .listening(port: port)
         case .clientConnected(let fingerprint):
             connectedDeviceName = store.peer(with: fingerprint)?.name
+            connectedDeviceFingerprint = fingerprint
             await startPipeline()
         case .clientDisconnected:
             injector.releaseAll()
             connectedDeviceName = nil
+            connectedDeviceFingerprint = nil
             await stopPipeline()
             if isHosting { state = .listening(port: listeningPort) }
         case .keyframeNeeded:

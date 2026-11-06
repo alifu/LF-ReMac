@@ -13,6 +13,11 @@ struct ClientSendGate: Sendable {
         case send
         case drop
         case dropAndRequestKeyframe
+        /// The backlog has drained after an overflow but no usable keyframe came: drop this frame and
+        /// ask again. The first request is made while the backlog is still full, so the keyframe it
+        /// produces is dropped too; without a second request the picture would freeze until the next
+        /// periodic keyframe. Not a new congestion signal.
+        case requestKeyframe
     }
 
     /// About 270 ms of video at 30 fps.
@@ -21,6 +26,7 @@ struct ClientSendGate: Sendable {
     private let maxPendingFrames: Int
     private var isWaitingForKeyframe = true
     private var hasSeenConfig = false
+    private var needsKeyframeRetry = false
     private(set) var pendingSends = 0
 
     init(maxPendingFrames: Int = Self.defaultMaxPendingFrames) {
@@ -46,17 +52,23 @@ struct ClientSendGate: Sendable {
             let wasStreaming = !isWaitingForKeyframe
             isWaitingForKeyframe = true
             hasSeenConfig = false
+            needsKeyframeRetry = true
             return wasStreaming ? .dropAndRequestKeyframe : .drop
         }
         guard isWaitingForKeyframe else { return enqueue() }
 
         if frame.type == .videoConfig {
             hasSeenConfig = true
+            needsKeyframeRetry = false
             return enqueue()
         }
         if frame.flags.contains(.keyframe), hasSeenConfig {
             isWaitingForKeyframe = false
             return enqueue()
+        }
+        if needsKeyframeRetry {
+            needsKeyframeRetry = false
+            return .requestKeyframe
         }
         return .drop
     }

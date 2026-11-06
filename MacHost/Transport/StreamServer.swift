@@ -111,6 +111,8 @@ final class StreamServer: @unchecked Sendable {
                 send(frame, on: session)
             case .drop:
                 break
+            case .requestKeyframe:
+                continuation.yield(.keyframeNeeded)
             case .dropAndRequestKeyframe:
                 logger.notice("Client is falling behind; dropping video until next keyframe")
                 continuation.yield(.keyframeNeeded)

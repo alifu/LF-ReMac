@@ -51,9 +51,38 @@ struct ClientSendGateTests {
         gate.sendCompleted()
         gate.sendCompleted()
 
+        _ = gate.decide(for: deltaFrame())
         #expect(gate.decide(for: deltaFrame()) == .drop)
         #expect(gate.decide(for: config()) == .send)
         #expect(gate.decide(for: keyframe()) == .send)
+    }
+
+    @Test func asksForAnotherKeyframeOnceTheBacklogHasDrained() {
+        var gate = ClientSendGate(maxPendingFrames: 2)
+        _ = gate.decide(for: config())
+        _ = gate.decide(for: keyframe())
+        #expect(gate.decide(for: deltaFrame()) == .dropAndRequestKeyframe)
+        gate.sendCompleted()
+        gate.sendCompleted()
+
+        #expect(gate.decide(for: deltaFrame()) == .requestKeyframe)
+        #expect(gate.decide(for: deltaFrame()) == .drop)
+    }
+
+    @Test func doesNotAskAgainWhileTheBacklogIsStillFull() {
+        var gate = ClientSendGate(maxPendingFrames: 2)
+        _ = gate.decide(for: config())
+        _ = gate.decide(for: keyframe())
+        _ = gate.decide(for: deltaFrame())
+
+        #expect(gate.decide(for: deltaFrame()) == .drop)
+        #expect(gate.decide(for: deltaFrame()) == .drop)
+    }
+
+    @Test func aNewClientNeverTriggersARetryRequest() {
+        var gate = ClientSendGate()
+
+        #expect(gate.decide(for: deltaFrame()) == .drop)
     }
 
     @Test func controlMessagesAlwaysPassTheGate() {

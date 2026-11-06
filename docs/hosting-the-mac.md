@@ -32,3 +32,45 @@ choose **Start Hosting**. Hosting does not start by itself, by design.
 ## Checks
 - `pmset -g assertions | grep LF-ReMac` shows the assertion while hosting and nothing after "Stop Hosting".
 - Leave the Mac idle overnight, then connect from the iPhone in the morning.
+
+## Can't connect over Tailscale
+Work through these in order. The Mac is the same in every case: it listens on port 47800 on all
+interfaces and accepts Tailscale addresses only when **Allow Tailscale Connections** is on.
+
+1. **Mac settings.** *Allow Tailscale Connections* is on, and the Mac is hosting (**Start Hosting**).
+   `tailscale status` on the Mac lists the iPhone and shows the Mac as online.
+2. **Saved address.** The iPhone does not find Tailscale addresses by itself (Bonjour only works on
+   the same Wi-Fi). Swipe the Mac's row, tap **Set Address…**, and enter the Mac's Tailscale IP
+   (`tailscale ip -4`, starts with `100.`) or its MagicDNS name, with port `47800`. The row then
+   shows `Saved: 100.x.y.z:47800`. The address belongs to the Mac, so it does not change when you
+   reinstall Tailscale on the iPhone.
+3. **Test the route without the app.** In the iPhone's Safari, open `https://<Mac Tailscale IP>:47800`.
+   - A TLS or "secure connection failed" error is good: the Mac was reached (a browser has no
+     client key, so it is refused).
+   - "Could not connect to the server" means the iPhone cannot reach the Mac. The app is not the problem.
+4. **See whether packets arrive** (needs your Mac password), then tap Connect on the iPhone:
+   `sudo tcpdump -ni utun4 'tcp port 47800'` (use the `utun` that `ifconfig` shows with your Tailscale IP).
+   - Nothing printed: the iPhone's traffic never enters the tunnel. Fix Tailscale on the iPhone.
+   - `SYN` lines printed: the traffic arrives, so look at the Mac (hosting on? port listening?
+     `lsof -nP -iTCP:47800 -sTCP:LISTEN`).
+5. **Fix the iPhone's tunnel.** Switch Tailscale off and on, force-quit and reopen it, check that
+   no other VPN or content filter is active (Settings → VPN & Device Management), turn off
+   *Private Wi-Fi Address* for the network, and test on cellular to separate a Wi-Fi problem from a
+   Tailscale one. If the app shows the Mac online and the Mac can ping the iPhone but the iPhone's
+   own traffic still never arrives, delete and reinstall the Tailscale app and sign in again. This
+   fixed a real case, where the tunnel looked connected but carried no traffic from the iPhone.
+6. **Connected but can't control the Mac.** *Allow Remote Control* resets to off at every launch. Turn it
+   on in the Mac's menu.
+
+### Reading the error
+| What the app or log says | Meaning |
+|---|---|
+| "Network is down" | iOS has no usable route to the address. Check step 5. |
+| "Connection refused" in about 25 ms | Something on the local network answered instead of the Mac: the traffic is not going through the tunnel. Check step 5. |
+| "does not recognise this iPhone" | The Mac was reached but the iPhone is not paired. Pair again. |
+| "security key does not match" | A different device answered. Do not pair again; check the address. |
+
+To read the iPhone's own logs over a cable: `brew install libimobiledevice`, then
+`idevicesyslog -u <device id>` while you tap Connect, and search the output for `iOSClient`.
+`xcrun devicectl list devices` shows the device id. The app's console output is empty because it
+logs to the system log, and the address itself is hidden (`<private>`) in the log.

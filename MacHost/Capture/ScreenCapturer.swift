@@ -36,6 +36,7 @@ final class ScreenCapturer {
     private let logger = AppLog.logger(category: "capture")
     private var stream: SCStream?
     private var output: StreamOutput?
+    private var configuration: SCStreamConfiguration?
 
     var isRunning: Bool { stream != nil }
 
@@ -49,6 +50,7 @@ final class ScreenCapturer {
     func start(
         displayID: CGDirectDisplayID? = nil,
         settings: CaptureSettings = .default,
+        audio: AudioStage? = nil,
         onFrame: @escaping FrameHandler
     ) async throws {
         guard !isRunning else { return }
@@ -69,22 +71,40 @@ final class ScreenCapturer {
         configuration.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         configuration.queueDepth = Self.queueDepth
         configuration.showsCursor = true
+        // Audio is switched on later (`setAudioCapture`), only while the iPhone wants it.
+        configuration.capturesAudio = false
+        configuration.excludesCurrentProcessAudio = true
+        configuration.sampleRate = 48_000
+        configuration.channelCount = 2
 
         let filter = SCContentFilter(display: display, excludingWindows: [])
-        let output = StreamOutput(handler: onFrame, logger: logger)
+        let output = StreamOutput(handler: onFrame, audio: audio, logger: logger)
         let stream = SCStream(filter: filter, configuration: configuration, delegate: output)
         try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: output.queue)
+        if let audio {
+            try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: audio.queue)
+        }
         try await stream.startCapture()
 
         self.stream = stream
         self.output = output
+        self.configuration = configuration
         logger.info("Capture started \(size.width)x\(size.height) @ \(settings.framesPerSecond) fps")
+    }
+
+    /// Switches system-audio capture on or off while the stream runs.
+    func setAudioCapture(_ enabled: Bool) async throws {
+        guard let stream, let configuration, configuration.capturesAudio != enabled else { return }
+        configuration.capturesAudio = enabled
+        try await stream.updateConfiguration(configuration)
+        logger.info("Audio capture \(enabled ? "on" : "off", privacy: .public)")
     }
 
     func stop() async {
         guard let stream else { return }
         self.stream = nil
         self.output = nil
+        self.configuration = nil
         do {
             try await stream.stopCapture()
             logger.info("Capture stopped")
@@ -98,16 +118,25 @@ final class ScreenCapturer {
 private final class StreamOutput: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     let queue = DispatchQueue(label: "com.alifu.lfremac.capture", qos: .userInteractive)
     private let handler: ScreenCapturer.FrameHandler
+    private let audio: AudioStage?
     private let logger: Logger
 
-    init(handler: @escaping ScreenCapturer.FrameHandler, logger: Logger) {
+    init(handler: @escaping ScreenCapturer.FrameHandler, audio: AudioStage?, logger: Logger) {
         self.handler = handler
+        self.audio = audio
         self.logger = logger
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .screen, sampleBuffer.isValid, Self.isCompleteFrame(sampleBuffer) else { return }
-        handler(sampleBuffer)
+        switch type {
+        case .screen:
+            guard sampleBuffer.isValid, Self.isCompleteFrame(sampleBuffer) else { return }
+            handler(sampleBuffer)
+        case .audio:
+            audio?.handle(sampleBuffer)
+        default:
+            break
+        }
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {

@@ -31,6 +31,7 @@ final class StreamingPipeline {
 
     private let logger = AppLog.logger(category: "pipeline")
     private var capturer: ScreenCapturer?
+    private var audioStage: AudioStage?
     private var encoder: H264Encoder?
     private var forwarding: Task<Void, Never>?
     private var ticking: Task<Void, Never>?
@@ -46,7 +47,11 @@ final class StreamingPipeline {
     var isRunning: Bool { capturer?.isRunning ?? false }
 
     /// - Parameter displayID: display to stream; nil means the main display.
-    func start(displayID: CGDirectDisplayID? = nil, settings: CaptureSettings = .default, sink: @escaping Sink) async throws {
+    /// - Parameter audioSink: receives `audioConfig` and `audioFrame`s once `setAudio(enabled: true)` is called.
+    func start(
+        displayID: CGDirectDisplayID? = nil, settings: CaptureSettings = .default,
+        audioSink: @escaping AudioStage.Sink = { _ in }, sink: @escaping Sink
+    ) async throws {
         guard !isRunning else { return }
         let size = CaptureSize.display(displayID ?? CGMainDisplayID(), maxLongSide: settings.maxLongSide)
         let encoder = try H264Encoder(
@@ -56,9 +61,10 @@ final class StreamingPipeline {
         )
         let forwarding = Task { for await event in encoder.events { sink(event) } }
         let capturer = ScreenCapturer()
+        let audioStage = AudioStage(sink: audioSink)
         let logger = logger
         do {
-            try await capturer.start(displayID: displayID, settings: settings) { sampleBuffer in
+            try await capturer.start(displayID: displayID, settings: settings, audio: audioStage) { sampleBuffer in
                 do {
                     try encoder.encode(sampleBuffer)
                 } catch {
@@ -72,9 +78,21 @@ final class StreamingPipeline {
         }
         self.encoder = encoder
         self.capturer = capturer
+        self.audioStage = audioStage
         self.forwarding = forwarding
         bitrate.reset()
         startTicking()
+    }
+
+    /// Starts or stops capturing system audio. A restart begins with a fresh `audioConfig`.
+    func setAudio(enabled: Bool) async {
+        guard let capturer, let audioStage else { return }
+        if enabled { audioStage.reset() }
+        do {
+            try await capturer.setAudioCapture(enabled)
+        } catch {
+            logger.error("Switching audio failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// The client fell behind: lower the bitrate (debounced by the controller).
@@ -120,6 +138,7 @@ final class StreamingPipeline {
         encoder?.invalidate()
         await forwarding?.value
         capturer = nil
+        audioStage = nil
         encoder = nil
         forwarding = nil
     }

@@ -19,7 +19,7 @@ extension StreamServer {
         case .selectDisplay:
             handleSelectDisplay(frame)
         case .audioControl:
-            break // Handled in Phase 7.7 (audio capture)
+            handleAudioControl(frame, from: session)
         case .videoConfig, .videoFrame, .hostInfo, .audioConfig, .audioFrame, .pairRequest, .pairResponse:
             break
         }
@@ -88,6 +88,15 @@ extension StreamServer {
             continuation.yield(.displaySelected(try SessionMessageCoding.selectDisplay(from: frame).displayID))
         } catch {
             logger.error("Dropped invalid display selection: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    private func handleAudioControl(_ frame: Frame, from session: PeerConnection) {
+        guard session.capabilities.canReceive(.audioFrame) else { return }
+        do {
+            continuation.yield(.audioRequested(try SessionMessageCoding.audioControl(from: frame).enabled))
+        } catch {
+            logger.error("Dropped invalid audio control: \(String(describing: error), privacy: .public)")
         }
     }
 

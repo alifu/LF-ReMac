@@ -47,6 +47,8 @@ final class HostSession {
     @ObservationIgnored private var listeningPort: UInt16 = 0
     @ObservationIgnored private var hasWarnedAboutAccessibility = false
     @ObservationIgnored private var peerCapabilities = PeerCapabilities.legacy
+    /// The iPhone turned audio on. Off at every connect; the iPhone sends its remembered choice after the hello.
+    @ObservationIgnored private var isAudioRequested = false
     /// UUID the connected iPhone asked for (or had last time); the display actually streamed may differ after fallback.
     @ObservationIgnored private var requestedDisplayUUID: String?
     @ObservationIgnored private var streamedDisplay: DisplayDescriptor?
@@ -239,17 +241,22 @@ final class HostSession {
             connectedDeviceName = store.peer(with: fingerprint)?.name
             connectedDeviceFingerprint = fingerprint
             peerCapabilities = .legacy
+            isAudioRequested = false
             requestedDisplayUUID = environment.settings.string(forKey: HostEnvironment.selectedDisplayKey(for: fingerprint))
             displayWatcher.start()
             await startPipeline()
         case .clientHello(let capabilities):
             peerCapabilities = capabilities
             sendHostInfo()
+        case .audioRequested(let enabled):
+            isAudioRequested = enabled
+            await pipeline?.setAudio(enabled: enabled)
         case .displaySelected(let uuid):
             await selectDisplay(uuid)
         case .clientDisconnected:
             displayWatcher.stop()
             peerCapabilities = .legacy
+            isAudioRequested = false
             injector.releaseAll()
             connectedDeviceName = nil
             connectedDeviceFingerprint = nil
@@ -341,8 +348,13 @@ final class HostSession {
         let pipeline = StreamingPipeline()
         let target = DisplayCatalog.resolve(requestedDisplayUUID, in: environment.displays())
         do {
-            try await pipeline.start(displayID: target?.displayID) { event in server.broadcast(event.asFrame) }
+            try await pipeline.start(
+                displayID: target?.displayID,
+                audioSink: { server.broadcast($0) },
+                sink: { server.broadcast($0.asFrame) }
+            )
             self.pipeline = pipeline
+            if isAudioRequested { await pipeline.setAudio(enabled: true) }
             streamedDisplay = target
             injector.setDisplay(target?.displayID)
             state = .streaming

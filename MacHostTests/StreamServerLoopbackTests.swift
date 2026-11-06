@@ -153,6 +153,63 @@ struct StreamServerLoopbackTests {
         }
     }
 
+    private func audioConfig() -> AudioConfig {
+        AudioConfig(codec: .aacLC, sampleRate: 48_000, channels: 2, frameSamples: 1024, audioSpecificConfig: Data([0x11, 0x90]))
+    }
+
+    @Test func audioControlBecomesAnEvent() async throws {
+        try await withPairedClient { harness, _, client in
+            let hello = ClientHello(protocolVersion: 1, capabilities: [.audio])
+            client.send(try SessionMessageCoding.frame(for: hello, timestampMicros: 0))
+            try await harness.recorder.waitFor(.clientHello(PeerCapabilities(hello: hello)))
+            client.send(try SessionMessageCoding.frame(for: AudioControl(enabled: true), timestampMicros: 0))
+            client.send(try SessionMessageCoding.frame(for: AudioControl(enabled: false), timestampMicros: 1))
+
+            try await harness.recorder.waitFor(.audioRequested(true))
+            try await harness.recorder.waitFor(.audioRequested(false))
+        }
+    }
+
+    @Test func audioControlFromAClientWithoutTheCapabilityIsIgnored() async throws {
+        try await withPairedClient { harness, _, client in
+            client.send(try SessionMessageCoding.frame(for: AudioControl(enabled: true), timestampMicros: 0))
+            let ping = Frame(type: .ping, timestampMicros: 1, payload: Data([1]))
+            client.send(ping)
+            _ = try await client.receive(count: 1)
+
+            #expect(harness.recorder.count { if case .audioRequested = $0 { true } else { false } } == 0)
+        }
+    }
+
+    @Test func audioReachesAClientThatAskedForIt() async throws {
+        try await withPairedClient { harness, _, client in
+            let hello = ClientHello(protocolVersion: 1, capabilities: [.displays, .audio])
+            client.send(try SessionMessageCoding.frame(for: hello, timestampMicros: 0))
+            try await harness.recorder.waitFor(.clientHello(PeerCapabilities(hello: hello)))
+            let config = try SessionMessageCoding.frame(for: audioConfig(), timestampMicros: 0)
+            let audio = try SessionMessageCoding.audioFrame(aac: Data([1, 2, 3]), timestampMicros: 5)
+
+            harness.server.broadcast(config)
+            harness.server.broadcast(audio)
+
+            #expect(try await client.receive(count: 2) == [config, audio])
+        }
+    }
+
+    @Test func audioIsNotSentToAClientWithoutTheAudioCapability() async throws {
+        try await withPairedClient { harness, _, client in
+            let hello = ClientHello(protocolVersion: 1, capabilities: [.displays])
+            client.send(try SessionMessageCoding.frame(for: hello, timestampMicros: 0))
+            try await harness.recorder.waitFor(.clientHello(PeerCapabilities(hello: hello)))
+            harness.server.broadcast(try SessionMessageCoding.frame(for: audioConfig(), timestampMicros: 0))
+            harness.server.broadcast(try SessionMessageCoding.audioFrame(aac: Data([1]), timestampMicros: 5))
+            let ping = Frame(type: .ping, timestampMicros: 1, payload: Data([1]))
+            client.send(ping)
+
+            #expect(try await client.receive(count: 1) == [ping])
+        }
+    }
+
     @Test func newPairedConnectionReplacesTheActiveSession() async throws {
         try await withPairedClient { harness, phone, first in
             let second = try harness.connect(phone)

@@ -16,6 +16,8 @@ enum StreamServerEvent: Equatable, Sendable {
     case clientHello(PeerCapabilities)
     /// The active client asked to stream this display (a validated display UUID; may no longer exist).
     case displaySelected(String)
+    /// The active client (which has the audio capability) turned audio on or off.
+    case audioRequested(Bool)
     /// The encoder should emit a fresh keyframe (new client, client request, or client fell behind).
     case keyframeNeeded
     /// The active client's connection is backed up; the encoder should lower its bitrate.
@@ -109,7 +111,8 @@ final class StreamServer: @unchecked Sendable {
     /// Sends `frame` to the active paired session if its send policy allows; otherwise drops it.
     func broadcast(_ frame: Frame) {
         queue.async { [self] in
-            guard let session = active, case .paired = session.role else { return }
+            guard let session = active, case .paired = session.role,
+                  session.capabilities.canReceive(frame.type) else { return }
             switch session.gate.decide(for: frame) {
             case .send:
                 send(frame, on: session)

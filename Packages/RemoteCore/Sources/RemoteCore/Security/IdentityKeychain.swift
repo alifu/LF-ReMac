@@ -120,11 +120,20 @@ struct IdentityKeychain {
     // MARK: Helpers
 
     /// iOS path (and macOS fallback): identity items carry both certificate and key attributes.
+    /// The iOS keychain rejects identity queries on the certificate's `kSecAttrPublicKeyHash`
+    /// (`errSecNotAvailable`, seen on the iOS 26 simulator) but matches the key's
+    /// `kSecAttrApplicationLabel`, which holds the same SHA-1; the macOS file keychain is the reverse.
+    /// Either way only an identity whose certificate is byte-for-byte `certificate` is returned.
     func queriedIdentity(for certificate: SecCertificate, publicKeyHash: Data) throws(IdentityError) -> SecIdentity {
         let expected = SecCertificateCopyData(certificate) as Data
+        #if os(iOS)
+        let hashAttribute = kSecAttrApplicationLabel
+        #else
+        let hashAttribute = kSecAttrPublicKeyHash
+        #endif
         let query: [CFString: Any] = [
             kSecClass: kSecClassIdentity,
-            kSecAttrPublicKeyHash: publicKeyHash,
+            hashAttribute: publicKeyHash,
             kSecReturnRef: true,
             kSecMatchLimit: kSecMatchLimitAll
         ]

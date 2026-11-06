@@ -7,6 +7,8 @@ public enum MessageType: UInt8, Sendable, CaseIterable {
     case keyframeRequest = 3  // Client asks host for an IDR frame
     case input = 4            // Touch / keyboard event (Phase 3)
     case ping = 5             // Latency probe, payload echoed back
+    case pairRequest = 6      // iPhone -> Mac pairing proof (Phase 4)
+    case pairResponse = 7     // Mac -> iPhone pairing proof (Phase 4)
 }
 
 /// Per-frame flags (bit set).

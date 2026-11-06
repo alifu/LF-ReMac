@@ -172,7 +172,7 @@ final class StreamServer: @unchecked Sendable {
             if session.gate.decide(for: frame) == .send { send(frame, on: session) }
         case .input:
             forwardInput(frame)
-        case .videoConfig, .videoFrame:
+        case .videoConfig, .videoFrame, .pairRequest, .pairResponse:
             break
         }
     }

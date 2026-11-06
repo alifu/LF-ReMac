@@ -12,7 +12,7 @@ enum ScreenCaptureError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .permissionDenied:
-            "Screen Recording permission is required. Enable LF-ReMac Host in System Settings > Privacy & Security > Screen Recording, then relaunch."
+            "Screen Recording permission is required. Enable LF-ReMacHost in System Settings > Privacy & Security > Screen Recording, then relaunch."
         case .noDisplayAvailable:
             "No display was found to capture."
         }

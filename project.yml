@@ -32,8 +32,8 @@ targets:
     info:
       path: MacHost/Info.plist
       properties:
-        CFBundleDisplayName: LF-ReMac Host
-        NSScreenCaptureUsageDescription: LF-ReMac Host streams your screen to your paired iPhone.
+        CFBundleDisplayName: LF-ReMacHost
+        NSScreenCaptureUsageDescription: LF-ReMacHost streams your screen to your paired iPhone.
         LSUIElement: true
     entitlements:
       path: MacHost/MacHost.entitlements
@@ -42,6 +42,9 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.alifu.lfremac.host
+        # The app is called LF-ReMacHost; the Swift module (and target, scheme, folder) stay "MacHost".
+        PRODUCT_NAME: LF-ReMacHost
+        PRODUCT_MODULE_NAME: MacHost
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_HARDENED_RUNTIME: YES
     scheme:
@@ -80,6 +83,9 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+        # The host app's product is named LF-ReMacHost (see the MacHost target).
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/LF-ReMacHost.app/Contents/MacOS/LF-ReMacHost
+        BUNDLE_LOADER: $(TEST_HOST)
     dependencies:
       - target: MacHost
 

@@ -27,6 +27,8 @@ final class StreamClient {
     /// Set while the stream dropped by itself and the client is redialling; `state` stays
     /// `.connected` so the picture stays on screen under a banner.
     private(set) var reconnect: ReconnectStatus?
+    /// The Mac's displays, once it has reported them; empty for a Mac that does not (or before it does).
+    private(set) var displays = HostDisplays.none
     let renderer: VideoRenderer
 
     @ObservationIgnored private let collector: StatsCollector
@@ -99,6 +101,12 @@ final class StreamClient {
         renderer.onVideoSizeChange = { [weak self] size in
             Task { @MainActor in self?.videoSize = size }
         }
+        link.onHostInfo = { [weak self, weak link] info in
+            Task { @MainActor in
+                guard let self, let link, self.link === link else { return }
+                self.displays = HostDisplays(info)
+            }
+        }
         self.link = link
         link.start(chunkBytes: Self.receiveChunkBytes)
     }
@@ -116,6 +124,7 @@ final class StreamClient {
         renderer.onVideoSizeChange = nil
         stats = .empty
         videoSize = .zero
+        displays = .none
         if isActive { state = .idle }
     }
 
@@ -126,6 +135,17 @@ final class StreamClient {
             link.send(try InputEventCoding.frame(for: event, timestampMicros: MonotonicClock.nowMicros()))
         } catch {
             logger.error("Could not encode input: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// Asks the Mac to stream another display. The picker updates when the Mac reports the change.
+    func selectDisplay(_ display: DisplayInfo) {
+        guard case .connected = state, let link, displays.canChoose, !displays.isSelected(display) else { return }
+        do {
+            link.send(try SessionMessageCoding.frame(
+                for: SelectDisplay(displayID: display.id), timestampMicros: MonotonicClock.nowMicros()))
+        } catch {
+            logger.error("Could not encode display choice: \(String(describing: error), privacy: .public)")
         }
     }
 

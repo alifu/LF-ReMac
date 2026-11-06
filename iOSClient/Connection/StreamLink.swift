@@ -24,6 +24,9 @@ final class StreamLink: @unchecked Sendable {
     private let wrongHostKey: WrongHostKeyFlag
     private let queue = DispatchQueue(label: "com.alifu.lfremac.client", qos: .userInteractive)
     private let logger = AppLog.logger(category: "link")
+    private static let protocolVersion = 1
+    /// Called on the link queue when the Mac reports its displays.
+    var onHostInfo: (@Sendable (HostInfo) -> Void)?
     private var decoder = FrameDecoder(allowedTypes: ProtocolTypes.clientAcceptsFromHost)
     private var history = LinkHistory()
     private var readyAt: ContinuousClock.Instant?
@@ -82,6 +85,7 @@ final class StreamLink: @unchecked Sendable {
             readyAt = .now
             history.reachedReady = true
             connection.send(content: FrameEncoder.encode(Self.probe()), completion: .contentProcessed { _ in })
+            sendHello()
             receive(chunkBytes: chunkBytes)
         case .failed(let error):
             finish(LinkCloseClassifier.cause(for: error, parked: false))
@@ -129,10 +133,33 @@ final class StreamLink: @unchecked Sendable {
             history.receivedFrame = true
             onStateChange?(.connected(address: RemoteAddress(connection.currentPath?.remoteEndpoint)))
         }
-        if frame.type == .ping {
+        switch frame.type {
+        case .ping:
             recordRoundTrip(sentAtMicros: frame.timestampMicros)
-        } else {
+        case .hostInfo:
+            handleHostInfo(frame)
+        default:
             renderer.handle(frame)
+        }
+    }
+
+    /// Tells the Mac what this build understands. A Mac built before Phase 7 does not know this message type and
+    /// drops the link, so update the Mac app first. (An older iPhone never sends it and keeps working.)
+    private func sendHello() {
+        let hello = ClientHello(protocolVersion: Self.protocolVersion, capabilities: [.displays])
+        do {
+            let frame = try SessionMessageCoding.frame(for: hello, timestampMicros: MonotonicClock.nowMicros())
+            connection.send(content: FrameEncoder.encode(frame), completion: .contentProcessed { _ in })
+        } catch {
+            logger.error("Could not encode hello: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    private func handleHostInfo(_ frame: Frame) {
+        do {
+            onHostInfo?(try SessionMessageCoding.hostInfo(from: frame))
+        } catch {
+            logger.error("Ignored invalid host info: \(String(describing: error), privacy: .public)")
         }
     }
 

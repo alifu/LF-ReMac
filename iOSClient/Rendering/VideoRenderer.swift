@@ -53,7 +53,11 @@ final class VideoRenderer: @unchecked Sendable {
     private func handleConfig(_ payload: Data) {
         do {
             if try factory.ingestConfig(payload) {
+                // New parameter sets (another display or size): delta frames still in flight were
+                // encoded for the old picture, so wait for the keyframe that follows this config.
                 displayLayer.flush()
+                waitForKeyframe()
+                hasRequestedKeyframe = false
                 reportVideoSize()
             }
         } catch {

@@ -43,8 +43,27 @@ struct StreamView: View {
         }
         .background(.black)
         .statusBarHidden()
+        .onChange(of: client.videoSize) { _, _ in pointer.resetZoom() }
         .onChange(of: pointerMode) { _, mode in pointer.mode = mode }
         .onAppear { pointer.onZoomChange = { zoom = $0 } }
+    }
+
+    private var displayMenu: some View {
+        Menu {
+            ForEach(client.displays.displays, id: \.id) { display in
+                Button {
+                    client.selectDisplay(display)
+                } label: {
+                    if client.displays.isSelected(display) {
+                        Label(HostDisplays.label(for: display), systemImage: "checkmark")
+                    } else {
+                        Text(HostDisplays.label(for: display))
+                    }
+                }
+            }
+        } label: {
+            Label("Choose display", systemImage: "display.2")
+        }
     }
 
     private var controls: some View {
@@ -55,6 +74,9 @@ struct StreamView: View {
             Button(pointerMode == .trackpad ? "Trackpad mode" : "Direct touch mode",
                    systemImage: pointerMode == .trackpad ? "rectangle.and.hand.point.up.left" : "hand.point.up.left") {
                 pointerMode = pointerMode == .trackpad ? .direct : .trackpad
+            }
+            if client.displays.canChoose {
+                displayMenu
             }
             if zoom.isZoomed {
                 Button("Reset zoom (\(String(format: "%.1f", Double(zoom.scale)))×)",

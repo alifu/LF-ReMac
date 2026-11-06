@@ -48,8 +48,8 @@ struct ClientSendGateTests {
         _ = gate.decide(for: config())
         _ = gate.decide(for: keyframe())
         _ = gate.decide(for: deltaFrame())
-        gate.sendCompleted()
-        gate.sendCompleted()
+        gate.sendCompleted(for: .videoFrame)
+        gate.sendCompleted(for: .videoFrame)
 
         _ = gate.decide(for: deltaFrame())
         #expect(gate.decide(for: deltaFrame()) == .drop)
@@ -62,8 +62,8 @@ struct ClientSendGateTests {
         _ = gate.decide(for: config())
         _ = gate.decide(for: keyframe())
         #expect(gate.decide(for: deltaFrame()) == .dropAndRequestKeyframe)
-        gate.sendCompleted()
-        gate.sendCompleted()
+        gate.sendCompleted(for: .videoFrame)
+        gate.sendCompleted(for: .videoFrame)
 
         #expect(gate.decide(for: deltaFrame()) == .requestKeyframe)
         #expect(gate.decide(for: deltaFrame()) == .drop)
@@ -95,8 +95,8 @@ struct ClientSendGateTests {
     @Test func sendCompletedNeverGoesBelowZeroPending() {
         var gate = ClientSendGate()
 
-        gate.sendCompleted()
-        gate.sendCompleted()
+        gate.sendCompleted(for: .videoFrame)
+        gate.sendCompleted(for: .videoFrame)
 
         #expect(gate.pendingSends == 0)
     }
@@ -129,7 +129,7 @@ struct ClientSendGateTests {
 
         #expect(gate.decide(for: audio()) == .drop)
 
-        gate.sendCompleted()
+        gate.sendCompleted(for: .audioFrame)
         #expect(gate.decide(for: audio()) == .send)
     }
 
@@ -141,5 +141,34 @@ struct ClientSendGateTests {
         _ = gate.decide(for: audio())
 
         #expect(gate.pendingSends == before)
+    }
+
+    @Test func anAudioBacklogDoesNotMakeVideoOverflow() {
+        var gate = ClientSendGate(maxPendingFrames: 8)
+        _ = gate.decide(for: config())
+        _ = gate.decide(for: keyframe())
+        for _ in 0..<12 { #expect(gate.decide(for: audio()) == .send) }
+
+        #expect(gate.decide(for: deltaFrame()) == .send)
+    }
+
+    @Test func aVideoBacklogDoesNotUseUpTheAudioAllowance() {
+        var gate = ClientSendGate(maxPendingFrames: 8)
+        _ = gate.decide(for: config())
+        _ = gate.decide(for: keyframe())
+        for _ in 0..<6 { _ = gate.decide(for: deltaFrame()) }
+
+        for _ in 0..<ClientSendGate.defaultMaxPendingAudioFrames { #expect(gate.decide(for: audio()) == .send) }
+        #expect(gate.decide(for: audio()) == .drop)
+    }
+
+    @Test func completedAudioSendsFreeOnlyTheAudioAllowance() {
+        var gate = ClientSendGate()
+        for _ in 0..<ClientSendGate.defaultMaxPendingAudioFrames { _ = gate.decide(for: audio()) }
+        #expect(gate.decide(for: audio()) == .drop)
+
+        gate.sendCompleted(for: .audioFrame)
+
+        #expect(gate.decide(for: audio()) == .send)
     }
 }

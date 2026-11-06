@@ -46,7 +46,23 @@ final class ScreenCapturer {
         CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess()
     }
 
-    /// - Parameter displayID: the display to capture; nil (or one that is gone) means the main display.
+    /// The display that will really be captured for `requested`: that display, or the main one when
+    /// `requested` is nil. Throws if it is not available (e.g. just unplugged).
+    static func resolveDisplayID(_ requested: CGDirectDisplayID?) async throws -> CGDirectDisplayID {
+        guard ensurePermission() else { throw ScreenCaptureError.permissionDenied }
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        return try pickDisplay(requested, from: content.displays).displayID
+    }
+
+    private static func pickDisplay(_ requested: CGDirectDisplayID?, from displays: [SCDisplay]) throws -> SCDisplay {
+        let wanted = requested ?? CGMainDisplayID()
+        if let match = displays.first(where: { $0.displayID == wanted }) { return match }
+        // Only an unspecified display may fall back; a specific one that vanished must not silently become another.
+        if requested == nil, let first = displays.first { return first }
+        throw ScreenCaptureError.noDisplayAvailable
+    }
+
+    /// - Parameter displayID: the display to capture; nil means the main display. A specific display that is gone throws.
     func start(
         displayID: CGDirectDisplayID? = nil,
         settings: CaptureSettings = .default,
@@ -57,10 +73,7 @@ final class ScreenCapturer {
         guard Self.ensurePermission() else { throw ScreenCaptureError.permissionDenied }
 
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        guard let display = content.displays.first(where: { $0.displayID == displayID })
-            ?? content.displays.first(where: { $0.displayID == CGMainDisplayID() })
-            ?? content.displays.first
-        else { throw ScreenCaptureError.noDisplayAvailable }
+        let display = try Self.pickDisplay(displayID, from: content.displays)
 
         // SCDisplay.width/height are points; use real pixels so the encoder size always matches.
         let size = CaptureSize.display(display.displayID, maxLongSide: settings.maxLongSide)
@@ -97,6 +110,8 @@ final class ScreenCapturer {
         guard let stream, let configuration, configuration.capturesAudio != enabled else { return }
         configuration.capturesAudio = enabled
         try await stream.updateConfiguration(configuration)
+        // stop() may have run while this was suspended; the stream is gone then.
+        guard self.stream === stream else { return }
         logger.info("Audio capture \(enabled ? "on" : "off", privacy: .public)")
     }
 

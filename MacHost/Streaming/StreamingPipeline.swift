@@ -45,6 +45,8 @@ final class StreamingPipeline {
     }
 
     var isRunning: Bool { capturer?.isRunning ?? false }
+    /// The display actually being captured (set once `start` succeeds).
+    private(set) var displayID: CGDirectDisplayID?
 
     /// - Parameter displayID: display to stream; nil means the main display.
     /// - Parameter audioSink: receives `audioConfig` and `audioFrame`s once `setAudio(enabled: true)` is called.
@@ -53,7 +55,9 @@ final class StreamingPipeline {
         audioSink: @escaping AudioStage.Sink = { _ in }, sink: @escaping Sink
     ) async throws {
         guard !isRunning else { return }
-        let size = CaptureSize.display(displayID ?? CGMainDisplayID(), maxLongSide: settings.maxLongSide)
+        // Decide the display first, so encoder size, capture and (for the caller) input mapping all agree.
+        let displayID = try await ScreenCapturer.resolveDisplayID(displayID)
+        let size = CaptureSize.display(displayID, maxLongSide: settings.maxLongSide)
         let encoder = try H264Encoder(
             width: size.width,
             height: size.height,
@@ -79,19 +83,30 @@ final class StreamingPipeline {
         self.encoder = encoder
         self.capturer = capturer
         self.audioStage = audioStage
+        self.displayID = displayID
         self.forwarding = forwarding
         bitrate.reset()
         startTicking()
     }
 
     /// Starts or stops capturing system audio. A restart begins with a fresh `audioConfig`.
-    func setAudio(enabled: Bool) async {
-        guard let capturer, let audioStage else { return }
-        if enabled { audioStage.reset() }
+    /// Returns whether audio is now in the requested state.
+    @discardableResult
+    func setAudio(enabled: Bool) async -> Bool {
+        guard let capturer, let audioStage else { return !enabled }
+        if enabled {
+            audioStage.reset()
+            audioStage.setEnabled(true)
+        } else {
+            audioStage.setEnabled(false)  // before capture stops, so nothing queued is sent
+        }
         do {
             try await capturer.setAudioCapture(enabled)
+            return true
         } catch {
             logger.error("Switching audio failed: \(error.localizedDescription, privacy: .public)")
+            audioStage.setEnabled(false)
+            return false
         }
     }
 
@@ -138,6 +153,7 @@ final class StreamingPipeline {
         encoder?.invalidate()
         await forwarding?.value
         capturer = nil
+        displayID = nil
         audioStage = nil
         encoder = nil
         forwarding = nil

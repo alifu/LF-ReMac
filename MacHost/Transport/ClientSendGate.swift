@@ -31,7 +31,10 @@ struct ClientSendGate: Sendable {
     private var isWaitingForKeyframe = true
     private var hasSeenConfig = false
     private var needsKeyframeRetry = false
-    private(set) var pendingSends = 0
+    private(set) var pendingVideoSends = 0
+    private(set) var pendingAudioSends = 0
+    /// Everything handed to the network and not yet taken over by it.
+    var pendingSends: Int { pendingVideoSends + pendingAudioSends }
 
     init(maxPendingFrames: Int = Self.defaultMaxPendingFrames) {
         self.maxPendingFrames = maxPendingFrames
@@ -49,17 +52,24 @@ struct ClientSendGate: Sendable {
         }
     }
 
-    /// Call when the network layer has taken ownership of a frame that was approved with `.send`.
-    mutating func sendCompleted() {
-        pendingSends = max(0, pendingSends - 1)
+    /// Call when the network layer has taken ownership of a frame of `type` that was approved with `.send`.
+    /// Audio is counted apart from everything else, so an audio backlog cannot make video overflow (and the reverse).
+    mutating func sendCompleted(for type: MessageType) {
+        if type == .audioFrame {
+            pendingAudioSends = max(0, pendingAudioSends - 1)
+        } else {
+            pendingVideoSends = max(0, pendingVideoSends - 1)
+        }
     }
 
     private mutating func decideAudio() -> Decision {
-        pendingSends >= Self.defaultMaxPendingAudioFrames ? .drop : enqueue()
+        guard pendingAudioSends < Self.defaultMaxPendingAudioFrames else { return .drop }
+        pendingAudioSends += 1
+        return .send
     }
 
     private mutating func decideVideo(_ frame: Frame) -> Decision {
-        if pendingSends >= maxPendingFrames {
+        if pendingVideoSends >= maxPendingFrames {
             let wasStreaming = !isWaitingForKeyframe
             isWaitingForKeyframe = true
             hasSeenConfig = false
@@ -85,7 +95,7 @@ struct ClientSendGate: Sendable {
     }
 
     private mutating func enqueue() -> Decision {
-        pendingSends += 1
+        pendingVideoSends += 1
         return .send
     }
 }

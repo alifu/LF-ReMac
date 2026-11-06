@@ -115,8 +115,8 @@ public enum SessionMessageCoding {
     }
 
     private static func isMAC(_ value: String) -> Bool {
-        let parts = value.split(separator: ":", omittingEmptySubsequences: false)
-        return parts.count == 6 && parts.allSatisfy { $0.count == 2 && $0.allSatisfy(\.isHexDigit) }
+        // The wire form is colon-separated; MACAddress also rejects all-zero and broadcast addresses.
+        value.contains(":") && MACAddress(value) != nil
     }
 
     // MARK: Private

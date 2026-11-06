@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Observation
 import RemoteCore
@@ -49,6 +50,11 @@ final class HostSession {
     @ObservationIgnored private var peerCapabilities = PeerCapabilities.legacy
     /// The iPhone turned audio on. Off at every connect; the iPhone sends its remembered choice after the hello.
     @ObservationIgnored private var isAudioRequested = false
+    /// Changes whenever an iPhone connects or leaves; a pipeline that finishes starting for an older one is thrown away.
+    @ObservationIgnored private var sessionGeneration = 0
+    /// Starting a pipeline suspends; only one start may run at a time, and requests made meanwhile are merged (last wins).
+    @ObservationIgnored private var isStartingPipeline = false
+    @ObservationIgnored private var needsAnotherStart = false
     /// UUID the connected iPhone asked for (or had last time); the display actually streamed may differ after fallback.
     @ObservationIgnored private var requestedDisplayUUID: String?
     @ObservationIgnored private var streamedDisplay: DisplayDescriptor?
@@ -242,6 +248,7 @@ final class HostSession {
             connectedDeviceFingerprint = fingerprint
             peerCapabilities = .legacy
             isAudioRequested = false
+            sessionGeneration += 1
             requestedDisplayUUID = environment.settings.string(forKey: HostEnvironment.selectedDisplayKey(for: fingerprint))
             displayWatcher.start()
             await startPipeline()
@@ -249,14 +256,16 @@ final class HostSession {
             peerCapabilities = capabilities
             sendHostInfo()
         case .audioRequested(let enabled):
+            guard enabled != isAudioRequested else { break }  // repeats change nothing
             isAudioRequested = enabled
-            await pipeline?.setAudio(enabled: enabled)
+            if let pipeline, await !pipeline.setAudio(enabled: enabled), enabled { isAudioRequested = false }
         case .displaySelected(let uuid):
             await selectDisplay(uuid)
         case .clientDisconnected:
             displayWatcher.stop()
             peerCapabilities = .legacy
             isAudioRequested = false
+            sessionGeneration += 1
             injector.releaseAll()
             connectedDeviceName = nil
             connectedDeviceFingerprint = nil
@@ -294,7 +303,7 @@ final class HostSession {
     /// The iPhone picked a display. Unknown UUIDs (a display that just went away) are ignored.
     private func selectDisplay(_ uuid: String) async {
         let displays = environment.displays()
-        guard displays.contains(where: { $0.uuid == uuid }), pipeline != nil else { return }
+        guard displays.contains(where: { $0.uuid == uuid }), hasClient else { return }
         requestedDisplayUUID = uuid
         if let fingerprint = connectedDeviceFingerprint {
             environment.settings.set(uuid, forKey: HostEnvironment.selectedDisplayKey(for: fingerprint))
@@ -305,7 +314,7 @@ final class HostSession {
 
     /// A display was added, removed or resized: fall back if the streamed one is gone, then refresh the iPhone.
     private func displaysChanged() async {
-        guard pipeline != nil else { return }
+        guard hasClient else { return }
         await restartPipelineIfDisplayChanged(in: environment.displays())
         sendHostInfo()
     }
@@ -342,26 +351,60 @@ final class HostSession {
         }
     }
 
+    private var hasClient: Bool { connectedDeviceFingerprint != nil }
+
     private func startPipeline() async {
-        guard let server else { return }
+        if isStartingPipeline {
+            needsAnotherStart = true
+            return
+        }
+        isStartingPipeline = true
+        defer { isStartingPipeline = false }
+        repeat {
+            needsAnotherStart = false
+            await startPipelineOnce()
+        } while needsAnotherStart && hasClient && DisplayCatalog.needsRestart(
+            from: streamedDisplay, to: DisplayCatalog.resolve(requestedDisplayUUID, in: environment.displays())
+        )
+    }
+
+    private func startPipelineOnce() async {
+        guard let server, hasClient else { return }
         await stopPipeline()
+        let generation = sessionGeneration
+        let wanted = DisplayCatalog.resolve(requestedDisplayUUID, in: environment.displays())?.displayID
         let pipeline = StreamingPipeline()
-        let target = DisplayCatalog.resolve(requestedDisplayUUID, in: environment.displays())
         do {
-            try await pipeline.start(
-                displayID: target?.displayID,
-                audioSink: { server.broadcast($0) },
-                sink: { server.broadcast($0.asFrame) }
-            )
-            self.pipeline = pipeline
-            if isAudioRequested { await pipeline.setAudio(enabled: true) }
-            streamedDisplay = target
-            injector.setDisplay(target?.displayID)
-            state = .streaming
+            do {
+                try await launch(pipeline, on: wanted, server: server)
+            } catch where wanted != nil {
+                // The chosen display vanished while switching: show the main display instead of nothing.
+                logger.notice("Display \(wanted ?? 0) unavailable, using the main display")
+                try await launch(pipeline, on: nil, server: server)
+            }
         } catch {
             logger.error("Could not start streaming: \(error.localizedDescription, privacy: .public)")
             state = .failed(error.localizedDescription)
+            return
         }
+        guard generation == sessionGeneration, hasClient else {
+            await pipeline.stop()  // the iPhone left (or another one came) while this was starting
+            return
+        }
+        let used = pipeline.displayID
+        self.pipeline = pipeline
+        streamedDisplay = environment.displays().first { $0.displayID == used }
+        injector.setDisplay(used)
+        state = .streaming
+        if isAudioRequested, await !pipeline.setAudio(enabled: true) { isAudioRequested = false }
+    }
+
+    private func launch(_ pipeline: StreamingPipeline, on displayID: CGDirectDisplayID?, server: StreamServer) async throws {
+        try await pipeline.start(
+            displayID: displayID,
+            audioSink: { server.broadcast($0) },
+            sink: { server.broadcast($0.asFrame) }
+        )
     }
 
     private func stopPipeline() async {

@@ -118,6 +118,9 @@ struct SessionMessageCodingTests {
             hostInfo(selected: uuidB),
             hostInfo(macs: ["aa:bb:cc"]),
             hostInfo(macs: ["zz:bb:cc:dd:ee:ff"]),
+            hostInfo(macs: ["00:00:00:00:00:00"]),
+            hostInfo(macs: ["ff:ff:ff:ff:ff:ff"]),
+            hostInfo(macs: ["aa-bb-cc-dd-ee-ff"]),
             hostInfo(macs: Array(repeating: "aa:bb:cc:dd:ee:ff", count: SessionMessageCoding.maxWakeMACs + 1)),
             hostInfo(displays: (0..<(SessionMessageCoding.maxDisplays + 1)).map {
                 display(String(format: "00000000-0000-0000-0000-%012d", $0), main: $0 == 0)

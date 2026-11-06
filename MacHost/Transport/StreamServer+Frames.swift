@@ -43,11 +43,12 @@ extension StreamServer {
     }
 
     func send(_ frame: Frame, on session: PeerConnection) {
+        let type = frame.type
         let data = FrameEncoder.encode(frame)
         session.connection.send(content: data, completion: .contentProcessed { [weak self, weak session] error in
             guard let self, let session else { return }
             queue.async {
-                session.gate.sendCompleted()
+                session.gate.sendCompleted(for: type)
                 if let error {
                     self.logger.error("Send failed: \(error.localizedDescription, privacy: .public)")
                     session.cancel()

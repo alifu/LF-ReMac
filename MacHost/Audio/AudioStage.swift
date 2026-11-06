@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreMedia
 import Foundation
+import os
 import OSLog
 import RemoteCore
 
@@ -13,9 +14,15 @@ final class AudioStage: @unchecked Sendable {
     private let sink: Sink
     private let logger = AppLog.logger(category: "audio")
     private var encoder: AACEncoder?
+    /// Cleared before capture is switched off, so buffers still in flight are not sent after the user said stop.
+    private let enabled = OSAllocatedUnfairLock(initialState: false)
 
     init(sink: @escaping Sink) {
         self.sink = sink
+    }
+
+    func setEnabled(_ value: Bool) {
+        enabled.withLock { $0 = value }
     }
 
     /// Forget the encoder, so the next audio starts with a fresh `audioConfig` (call when audio is switched on).
@@ -25,7 +32,7 @@ final class AudioStage: @unchecked Sendable {
 
     /// Call on `queue`.
     func handle(_ sampleBuffer: CMSampleBuffer) {
-        guard sampleBuffer.isValid, let pcm = AudioSampleBuffer.pcm(from: sampleBuffer) else { return }
+        guard enabled.withLock({ $0 }), sampleBuffer.isValid, let pcm = AudioSampleBuffer.pcm(from: sampleBuffer) else { return }
         do {
             let encoder = try encoder(for: pcm.format)
             let micros = EncodedVideoEvent.micros(from: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))

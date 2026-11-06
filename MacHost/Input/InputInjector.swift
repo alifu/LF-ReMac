@@ -22,7 +22,10 @@ final class InputInjector {
     }
 
     func inject(_ event: InputEvent) {
-        translator.displayBounds = CGDisplayBounds(displayID)
+        let bounds = CGDisplayBounds(displayID)
+        // A display that just went away reports an empty rectangle; clicking there would land elsewhere.
+        guard !bounds.isEmpty, !bounds.isNull else { return }
+        translator.displayBounds = bounds
         post(translator.events(for: event))
     }
 

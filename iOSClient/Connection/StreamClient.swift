@@ -216,6 +216,7 @@ final class StreamClient {
             logger.info("Connection closed")
             stopStatsLoop()
             audioPlayer.setActive(false)
+            isAudioOn = false
             link = nil
             stats = .empty
             let (step, attempts) = attempts.next(after: summary)

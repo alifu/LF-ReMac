@@ -3,6 +3,15 @@ import OSLog
 import RemoteCore
 
 extension H264EncoderSettings {
+    func with(averageBitRate: Int) -> H264EncoderSettings {
+        H264EncoderSettings(
+            averageBitRate: averageBitRate,
+            framesPerSecond: framesPerSecond,
+            keyframeIntervalSeconds: keyframeIntervalSeconds,
+            peakBitRateRatio: peakBitRateRatio
+        )
+    }
+
     func with(framesPerSecond: Int) -> H264EncoderSettings {
         H264EncoderSettings(
             averageBitRate: averageBitRate,
@@ -23,6 +32,15 @@ final class StreamingPipeline {
     private var capturer: ScreenCapturer?
     private var encoder: H264Encoder?
     private var forwarding: Task<Void, Never>?
+    private var ticking: Task<Void, Never>?
+    private var bitrate = BitrateController(maxBitRate: H264EncoderSettings.default.averageBitRate)
+    private let bitrateLogger = AppLog.logger(category: "bitrate")
+    private let clock: @Sendable () -> Date
+    private static let tickInterval = Duration.seconds(1)
+
+    init(clock: @escaping @Sendable () -> Date = Date.init) {
+        self.clock = clock
+    }
 
     var isRunning: Bool { capturer?.isRunning ?? false }
 
@@ -53,6 +71,39 @@ final class StreamingPipeline {
         self.encoder = encoder
         self.capturer = capturer
         self.forwarding = forwarding
+        bitrate.reset()
+        startTicking()
+    }
+
+    /// The client fell behind: lower the bitrate (debounced by the controller).
+    func reportCongestion() {
+        guard encoder != nil else { return }
+        applyBitrate(.congested(at: clock()))
+    }
+
+    private func startTicking() {
+        ticking?.cancel()
+        ticking = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.tickInterval)
+                guard !Task.isCancelled, let self else { return }
+                self.applyBitrate(.tick(at: self.clock()))
+            }
+        }
+    }
+
+    private func applyBitrate(_ event: BitrateController.Event) {
+        guard let encoder else { return }
+        let previous = bitrate.targetBitRate
+        bitrate.handle(event)
+        let target = bitrate.targetBitRate
+        guard target != previous else { return }
+        do {
+            try encoder.setBitrate(target)
+            bitrateLogger.notice("Bitrate \(previous) -> \(target) bps")
+        } catch {
+            bitrateLogger.error("Setting bitrate failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// Makes the next encoded frame a keyframe (preceded by fresh parameter sets).
@@ -61,6 +112,8 @@ final class StreamingPipeline {
     }
 
     func stop() async {
+        ticking?.cancel()
+        ticking = nil
         await capturer?.stop()
         encoder?.invalidate()
         await forwarding?.value

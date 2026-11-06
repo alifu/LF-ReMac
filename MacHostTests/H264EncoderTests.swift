@@ -83,6 +83,26 @@ struct H264EncoderTests {
         }
     }
 
+    @Test func setBitrateSucceedsAndEncodingContinues() async throws {
+        let encoder = try H264Encoder(width: Self.width, height: Self.height)
+        try encoder.setBitrate(2_000_000)
+        try encoder.setBitrate(H264EncoderSettings.default.averageBitRate)
+        let events = try await Self.encodeFrames(with: encoder)
+
+        #expect(events.compactMap(Self.frameInfo).count == Self.frameCount)
+    }
+
+    @Test func setBitrateRejectsNonPositiveValues() throws {
+        let encoder = try H264Encoder(width: Self.width, height: Self.height)
+        #expect(throws: H264EncoderError.invalidSettings) { try encoder.setBitrate(0) }
+    }
+
+    @Test func setBitrateAfterInvalidateThrows() throws {
+        let encoder = try H264Encoder(width: Self.width, height: Self.height)
+        encoder.invalidate()
+        #expect(throws: H264EncoderError.invalidated) { try encoder.setBitrate(2_000_000) }
+    }
+
     // MARK: - Helpers
 
     private struct FrameInfo {

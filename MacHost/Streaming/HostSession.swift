@@ -239,6 +239,8 @@ final class HostSession {
             if isHosting { state = .listening(port: listeningPort) }
         case .keyframeNeeded:
             pipeline?.forceKeyframe()
+        case .congestion:
+            pipeline?.reportCongestion()
         case .input(let input):
             handleInput(input)
         case .devicePaired(let device):

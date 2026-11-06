@@ -22,6 +22,7 @@ final class H264Encoder: @unchecked Sendable {
     private let lock = NSLock()
     private var session: VTCompressionSession?
     private var isKeyframeRequested = false
+    private let settings: H264EncoderSettings
 
     private static var forceKeyframeProperties: CFDictionary {
         [kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue] as CFDictionary
@@ -37,6 +38,7 @@ final class H264Encoder: @unchecked Sendable {
         )
         (events, continuation) = AsyncStream.makeStream(of: EncodedVideoEvent.self)
         session = created.session
+        self.settings = settings
         isHardwareAccelerated = created.isHardwareAccelerated
     }
 
@@ -83,6 +85,28 @@ final class H264Encoder: @unchecked Sendable {
     /// connects or requests a keyframe.
     func forceKeyframe() {
         lock.withLock { isKeyframeRequested = true }
+    }
+
+    /// Changes the target bitrate of the live session (average rate and the matching peak cap,
+    /// like `CompressionSessionFactory`). Takes effect on following frames; no keyframe needed.
+    func setBitrate(_ bitsPerSecond: Int) throws(H264EncoderError) {
+        guard bitsPerSecond > 0 else { throw .invalidSettings }
+        let target = settings.with(averageBitRate: bitsPerSecond)
+        lock.lock()
+        defer { lock.unlock() }
+        guard let session else { throw .invalidated }
+        let average = VTSessionSetProperty(
+            session, key: kVTCompressionPropertyKey_AverageBitRate, value: target.averageBitRate as CFNumber
+        )
+        guard average == noErr else {
+            throw .propertyFailed(key: kVTCompressionPropertyKey_AverageBitRate as String, status: average)
+        }
+        // Optional, as in the factory: some encoders ignore the peak cap.
+        let limits = VTSessionSetProperty(
+            session, key: kVTCompressionPropertyKey_DataRateLimits,
+            value: [target.peakBytesPerSecond, 1] as CFArray
+        )
+        if limits != noErr { logger.notice("Encoder ignored DataRateLimits update (\(limits))") }
     }
 
     /// Blocks until every frame submitted so far has been emitted on `events`.

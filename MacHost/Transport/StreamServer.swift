@@ -14,6 +14,8 @@ enum StreamServerEvent: Equatable, Sendable {
     case input(InputEvent)
     /// The encoder should emit a fresh keyframe (new client, client request, or client fell behind).
     case keyframeNeeded
+    /// The active client's connection is backed up; the encoder should lower its bitrate.
+    case congestion
     /// A new iPhone proved knowledge of the pairing secret and was saved to the store.
     case devicePaired(PairedDevice)
     case pairingFailed(PairingRejection)
@@ -112,6 +114,7 @@ final class StreamServer: @unchecked Sendable {
             case .dropAndRequestKeyframe:
                 logger.notice("Client is falling behind; dropping video until next keyframe")
                 continuation.yield(.keyframeNeeded)
+                continuation.yield(.congestion)
             }
         }
     }

@@ -34,7 +34,11 @@ struct HostingSection: View {
         case .listening(let port):
             "Waiting for iPhone (port \(port))"
         case .streaming:
-            "Streaming to iPhone"
+            if let name = session.connectedDeviceName {
+                "Streaming to \(name)"
+            } else {
+                "Streaming to iPhone"
+            }
         case .failed(let message):
             "Error: \(message)"
         }

@@ -35,6 +35,8 @@ struct HostMenuView: View {
     var body: some View {
         HostingSection(session: session)
         Divider()
+        PairingMenuSection(session: session)
+        Divider()
         TestClipSection(model: clipModel)
         Divider()
         Button("Quit LF-ReMac") {

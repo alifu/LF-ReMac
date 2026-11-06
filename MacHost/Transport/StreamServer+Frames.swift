@@ -14,7 +14,9 @@ extension StreamServer {
             if session.gate.decide(for: frame) == .send { send(frame, on: session) }
         case .input:
             forwardInput(frame)
-        case .videoConfig, .videoFrame, .pairRequest, .pairResponse:
+        case .clientHello, .selectDisplay:
+            break // Handled in Phase 7.2 (display selection)
+        case .videoConfig, .videoFrame, .hostInfo, .pairRequest, .pairResponse:
             break
         }
     }

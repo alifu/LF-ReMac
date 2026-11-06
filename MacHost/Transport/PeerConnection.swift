@@ -51,7 +51,7 @@ final class PeerConnection: @unchecked Sendable {
 
     func becomePaired(_ fingerprint: DeviceFingerprint) {
         role = .paired(fingerprint)
-        decoder = FrameDecoder()
+        decoder = FrameDecoder(allowedTypes: ProtocolTypes.hostAcceptsFromPairedClient)
         clearDeadline()
     }
 

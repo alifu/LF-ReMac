@@ -35,7 +35,7 @@ final class VideoRenderer: @unchecked Sendable {
             handleConfig(frame.payload)
         case .videoFrame:
             handleVideo(frame)
-        case .keyframeRequest, .input, .ping, .pairRequest, .pairResponse:
+        case .keyframeRequest, .input, .ping, .pairRequest, .pairResponse, .clientHello, .hostInfo, .selectDisplay:
             break
         }
     }

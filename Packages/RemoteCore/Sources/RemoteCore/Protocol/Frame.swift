@@ -9,6 +9,9 @@ public enum MessageType: UInt8, Sendable, CaseIterable {
     case ping = 5             // Latency probe, payload echoed back
     case pairRequest = 6      // iPhone -> Mac pairing proof (Phase 4)
     case pairResponse = 7     // Mac -> iPhone pairing proof (Phase 4)
+    case clientHello = 8      // iPhone -> Mac: protocol version + capabilities (Phase 7)
+    case hostInfo = 9         // Mac -> iPhone: displays, wake MACs; only after a hello that asked for it
+    case selectDisplay = 10   // iPhone -> Mac: choose which display to stream
 }
 
 /// Per-frame flags (bit set).

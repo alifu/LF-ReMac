@@ -37,7 +37,7 @@ struct ClientSendGate: Sendable {
         switch frame.type {
         case .videoConfig, .videoFrame:
             return decideVideo(frame)
-        case .keyframeRequest, .input, .ping, .pairRequest, .pairResponse:
+        case .keyframeRequest, .input, .ping, .pairRequest, .pairResponse, .clientHello, .hostInfo, .selectDisplay:
             return enqueue()
         }
     }

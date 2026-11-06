@@ -24,7 +24,7 @@ final class StreamLink: @unchecked Sendable {
     private let wrongHostKey: WrongHostKeyFlag
     private let queue = DispatchQueue(label: "com.alifu.lfremac.client", qos: .userInteractive)
     private let logger = AppLog.logger(category: "link")
-    private var decoder = FrameDecoder()
+    private var decoder = FrameDecoder(allowedTypes: ProtocolTypes.clientAcceptsFromHost)
     private var history = LinkHistory()
     private var readyAt: ContinuousClock.Instant?
     private var isClosed = false

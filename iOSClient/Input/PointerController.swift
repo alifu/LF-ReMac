@@ -19,6 +19,9 @@ final class PointerController {
 
     var mode: Mode
     var viewport = VideoViewport(viewSize: .zero, videoSize: .zero)
+    /// Called when a gesture (pinch, pan, following the pointer, reset) changes the zoom, so the
+    /// video can be redrawn to match.
+    var onZoomChange: (@MainActor (ViewZoom) -> Void)?
     private(set) var cursor = TrackpadCursor()
     private(set) var isDragging = false
     private let send: @MainActor (InputEvent) -> Void
@@ -41,6 +44,7 @@ final class PointerController {
         switch mode {
         case .trackpad:
             cursor = cursor.moved(by: delta, in: viewport)
+            followPointerIfZoomed()
         case .direct:
             cursor = cursor.placed(at: viewport.normalizedPoint(for: location))
         }
@@ -65,6 +69,32 @@ final class PointerController {
         let fraction = viewport.normalizedDelta(for: delta)
         guard fraction.dx != 0 || fraction.dy != 0 else { return }
         send(.scroll(dx: fraction.dx * Self.scrollPixelsPerScreen, dy: fraction.dy * Self.scrollPixelsPerScreen))
+    }
+
+    // MARK: - Zoom
+
+    /// Pinch: zoom by `factor` keeping the picture under `anchor` (a view position) in place.
+    func pinch(by factor: CGFloat, around anchor: CGPoint) {
+        setZoom(viewport.zoom.zoomed(by: factor, around: anchor, in: viewport))
+    }
+
+    /// Moves the zoomed picture with the fingers (`delta` in view points).
+    func panZoomedView(by delta: CGSize) {
+        setZoom(viewport.zoom.panned(by: delta, in: viewport))
+    }
+
+    func resetZoom() {
+        setZoom(.identity)
+    }
+
+    private func followPointerIfZoomed() {
+        setZoom(viewport.zoom.keepingVisible(cursor.position, in: viewport))
+    }
+
+    private func setZoom(_ zoom: ViewZoom) {
+        guard zoom != viewport.zoom else { return }
+        viewport = viewport.withZoom(zoom)
+        onZoomChange?(zoom)
     }
 
     // MARK: - Helpers

@@ -6,19 +6,39 @@ import Foundation
 public struct VideoViewport: Equatable, Sendable {
     public let viewSize: CGSize
     public let videoSize: CGSize
+    /// How far the viewer has zoomed in; `.identity` shows the whole picture.
+    public let zoom: ViewZoom
 
-    public init(viewSize: CGSize, videoSize: CGSize) {
+    public init(viewSize: CGSize, videoSize: CGSize, zoom: ViewZoom = .identity) {
         self.viewSize = viewSize
         self.videoSize = videoSize
+        self.zoom = zoom
     }
 
-    /// Where the video is drawn inside the view (centered, aspect-fit). `.zero` for degenerate sizes.
-    public var videoRect: CGRect {
+    public func withZoom(_ zoom: ViewZoom) -> VideoViewport {
+        VideoViewport(viewSize: viewSize, videoSize: videoSize, zoom: zoom)
+    }
+
+    /// Size of the whole picture drawn aspect-fit inside `viewSize` (before any zoom).
+    static func fitSize(viewSize: CGSize, videoSize: CGSize) -> CGSize {
         guard viewSize.width > 0, viewSize.height > 0, videoSize.width > 0, videoSize.height > 0 else { return .zero }
         let scale = min(viewSize.width / videoSize.width, viewSize.height / videoSize.height)
-        let width = videoSize.width * scale
-        let height = videoSize.height * scale
-        return CGRect(x: (viewSize.width - width) / 2, y: (viewSize.height - height) / 2, width: width, height: height)
+        return CGSize(width: videoSize.width * scale, height: videoSize.height * scale)
+    }
+
+    /// Where the video is drawn inside the view (aspect-fit, then zoomed about the view centre and
+    /// shifted by the zoom offset). `.zero` for degenerate sizes.
+    public var videoRect: CGRect {
+        let fit = Self.fitSize(viewSize: viewSize, videoSize: videoSize)
+        guard fit != .zero else { return .zero }
+        let width = fit.width * zoom.scale
+        let height = fit.height * zoom.scale
+        return CGRect(
+            x: (viewSize.width - width) / 2 + zoom.offset.width,
+            y: (viewSize.height - height) / 2 + zoom.offset.height,
+            width: width,
+            height: height
+        )
     }
 
     /// Remote-screen position under `viewPoint`; points over the black bars snap to the nearest edge.

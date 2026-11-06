@@ -8,6 +8,7 @@ struct StreamView: View {
     @State private var isStatsVisible = true
     @State private var isKeyboardActive = false
     @State private var pointerMode: PointerController.Mode = .trackpad
+    @State private var zoom = ViewZoom.identity
     @State private var pointer: PointerController
     @State private var keyboard: KeyboardController
 
@@ -21,8 +22,8 @@ struct StreamView: View {
 
     var body: some View {
         ZStack {
-            VideoView(layer: client.renderer.displayLayer)
-            InputSurface(controller: pointer, videoSize: client.videoSize)
+            VideoView(layer: client.renderer.displayLayer, zoom: zoom)
+            InputSurface(controller: pointer, videoSize: client.videoSize, zoom: zoom)
             KeyboardHost(isActive: $isKeyboardActive, keyboard: keyboard)
                 .frame(width: 0, height: 0)
         }
@@ -43,6 +44,7 @@ struct StreamView: View {
         .background(.black)
         .statusBarHidden()
         .onChange(of: pointerMode) { _, mode in pointer.mode = mode }
+        .onAppear { pointer.onZoomChange = { zoom = $0 } }
     }
 
     private var controls: some View {
@@ -53,6 +55,12 @@ struct StreamView: View {
             Button(pointerMode == .trackpad ? "Trackpad mode" : "Direct touch mode",
                    systemImage: pointerMode == .trackpad ? "rectangle.and.hand.point.up.left" : "hand.point.up.left") {
                 pointerMode = pointerMode == .trackpad ? .direct : .trackpad
+            }
+            if zoom.isZoomed {
+                Button("Reset zoom (\(String(format: "%.1f", Double(zoom.scale)))×)",
+                       systemImage: "arrow.down.right.and.arrow.up.left") {
+                    pointer.resetZoom()
+                }
             }
             Button("Disconnect from \(hostName)", systemImage: "xmark.circle.fill") {
                 client.disconnect()

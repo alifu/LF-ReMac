@@ -123,3 +123,38 @@ struct HostSessionPairingTests {
         }
     }
 }
+
+@MainActor
+struct HostSessionSettingsTests {
+    private final class Counter: @unchecked Sendable { var held = 0 }
+
+    @Test func keepAwakeAndTailscaleDefaultToOnAndOff() {
+        let session = HostSession(environment: HostEnvironment(
+            loadIdentity: { _ in throw IdentityError.identityNotFound }, keyStore: InMemoryKeyStore(),
+            displayName: { "Mac" }, invitationHost: { nil }, serviceType: nil, port: .any, clock: { Date() },
+            limits: .standard
+        ))
+
+        #expect(session.keepsMacAwake)
+        #expect(!session.allowsTailscale)
+    }
+
+    @Test func choicesAreRemembered() {
+        let settings = MemorySettings()
+        func make() -> HostSession {
+            HostSession(environment: HostEnvironment(
+                loadIdentity: { _ in throw IdentityError.identityNotFound }, keyStore: InMemoryKeyStore(),
+                displayName: { "Mac" }, invitationHost: { nil }, serviceType: nil, port: .any, clock: { Date() },
+                limits: .standard, settings: settings
+            ))
+        }
+        let first = make()
+        first.setKeepsMacAwake(false)
+        first.setAllowsTailscale(true)
+
+        let second = make()
+
+        #expect(!second.keepsMacAwake)
+        #expect(second.allowsTailscale)
+    }
+}

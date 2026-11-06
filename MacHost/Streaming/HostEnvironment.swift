@@ -6,6 +6,8 @@ import RemoteCore
 struct HostEnvironment: Sendable {
     static let pairedDevicesService = "com.alifu.lfremac.host.paired-devices"
     static let pairedDevicesKey = "paired-devices"
+    static let keepAwakeKey = "keepMacAwake"
+    static let allowTailscaleKey = "allowTailscale"
 
     /// Loads (or creates on first run) this Mac's TLS identity.
     let loadIdentity: @Sendable (_ deviceName: String) throws -> DeviceIdentity
@@ -17,6 +19,9 @@ struct HostEnvironment: Sendable {
     let port: NWEndpoint.Port
     let clock: PairingCoordinator.Clock
     let limits: StreamServerLimits
+    /// Defaults are inert (in-memory settings, no power assertion) so tests never touch the system.
+    var settings: any HostSettings = MemorySettings()
+    var acquirePowerAssertion: PowerManager.Acquire = { _ in nil }
 
     static let live = HostEnvironment(
         loadIdentity: { name in try DeviceIdentity.loadOrCreate(deviceName: name) },
@@ -26,8 +31,21 @@ struct HostEnvironment: Sendable {
         serviceType: StreamServer.bonjourServiceType,
         port: StreamServer.defaultPort,
         clock: { Date() },
-        limits: .standard
+        limits: .standard,
+        settings: UserDefaults.standard,
+        acquirePowerAssertion: PowerManager.systemAcquire
     )
+}
+
+/// Small user preferences; `UserDefaults` in the app, a dictionary in tests.
+protocol HostSettings: Sendable {
+    func bool(forKey key: String) -> Bool?
+    func set(_ value: Bool, forKey key: String)
+}
+
+extension UserDefaults: HostSettings {
+    func bool(forKey key: String) -> Bool? { object(forKey: key) as? Bool }
+    func set(_ value: Bool, forKey key: String) { set(value as Any, forKey: key) }
 }
 
 /// The Mac's "Pair New iPhone" window state for the UI.
@@ -59,4 +77,13 @@ extension PairingRejection {
             "A device connected but did not finish pairing."
         }
     }
+}
+
+/// In-memory settings for tests and previews.
+final class MemorySettings: HostSettings, @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: Bool] = [:]
+
+    func bool(forKey key: String) -> Bool? { lock.withLock { values[key] } }
+    func set(_ value: Bool, forKey key: String) { lock.withLock { values[key] = value } }
 }

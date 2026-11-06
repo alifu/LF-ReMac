@@ -28,11 +28,16 @@ final class HostSession {
     private(set) var connectedDeviceName: String?
     /// Key of the connected iPhone; identifies it even if two devices share a name.
     private(set) var connectedDeviceFingerprint: DeviceFingerprint?
+    /// Keep the Mac from idle-sleeping while hosting (default on, remembered).
+    private(set) var keepsMacAwake: Bool
+    /// Accept connections arriving over Tailscale (default off, remembered). LAN is always allowed.
+    private(set) var allowsTailscale: Bool
 
     @ObservationIgnored private let environment: HostEnvironment
     @ObservationIgnored private let store: PairedDeviceStore
     @ObservationIgnored private let logger = AppLog.logger(category: "host-session")
     @ObservationIgnored private let injector = InputInjector()
+    @ObservationIgnored private let power: PowerManager
     @ObservationIgnored private var identity: DeviceIdentity?
     @ObservationIgnored private var coordinator: PairingCoordinator?
     @ObservationIgnored private var server: StreamServer?
@@ -44,6 +49,9 @@ final class HostSession {
 
     init(environment: HostEnvironment = .live) {
         self.environment = environment
+        self.power = PowerManager(acquire: environment.acquirePowerAssertion)
+        self.keepsMacAwake = environment.settings.bool(forKey: HostEnvironment.keepAwakeKey) ?? true
+        self.allowsTailscale = environment.settings.bool(forKey: HostEnvironment.allowTailscaleKey) ?? false
         self.store = PairedDeviceStore(keyStore: environment.keyStore, key: HostEnvironment.pairedDevicesKey)
     }
 
@@ -63,7 +71,8 @@ final class HostSession {
         )
         let server = StreamServer(
             identity: identity, store: store, coordinator: coordinator, hostName: environment.displayName(),
-            serviceType: environment.serviceType, port: environment.port, limits: environment.limits
+            serviceType: environment.serviceType, port: environment.port, limits: environment.limits,
+            networkPolicy: NetworkPolicy(allowsTailscale: allowsTailscale)
         )
         do {
             try server.start()
@@ -73,12 +82,25 @@ final class HostSession {
         }
         self.coordinator = coordinator
         self.server = server
+        power.setKeepAwake(keepsMacAwake)
         refreshPairedDevices()
         eventLoop = Task { [weak self] in
             for await event in server.events {
                 await self?.handle(event)
             }
         }
+    }
+
+    func setKeepsMacAwake(_ enabled: Bool) {
+        keepsMacAwake = enabled
+        environment.settings.set(enabled, forKey: HostEnvironment.keepAwakeKey)
+        if isHosting { power.setKeepAwake(enabled) }
+    }
+
+    func setAllowsTailscale(_ enabled: Bool) {
+        allowsTailscale = enabled
+        environment.settings.set(enabled, forKey: HostEnvironment.allowTailscaleKey)
+        server?.setNetworkPolicy(NetworkPolicy(allowsTailscale: enabled))
     }
 
     func setRemoteControl(enabled: Bool) {
@@ -101,6 +123,7 @@ final class HostSession {
         eventLoop = nil
         connectedDeviceName = nil
         connectedDeviceFingerprint = nil
+        power.setKeepAwake(false)
         state = .stopped
     }
 

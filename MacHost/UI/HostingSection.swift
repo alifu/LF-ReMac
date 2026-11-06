@@ -16,6 +16,14 @@ struct HostingSection: View {
             }
         }
         Divider()
+        Toggle("Keep Mac Awake While Hosting", isOn: Binding(
+            get: { session.keepsMacAwake },
+            set: { session.setKeepsMacAwake($0) }
+        ))
+        Toggle("Allow Tailscale Connections", isOn: Binding(
+            get: { session.allowsTailscale },
+            set: { session.setAllowsTailscale($0) }
+        ))
         Toggle("Allow Remote Control", isOn: Binding(
             get: { session.isRemoteControlEnabled },
             set: { session.setRemoteControl(enabled: $0) }

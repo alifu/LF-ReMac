@@ -45,6 +45,7 @@ final class StreamServer: @unchecked Sendable {
     private let serviceType: String?
     private let requestedPort: NWEndpoint.Port
     private var listener: NWListener?
+    private var networkPolicy: NetworkPolicy
 
     // Queue-confined connection registry.
     var active: PeerConnection?
@@ -60,7 +61,8 @@ final class StreamServer: @unchecked Sendable {
         hostName: String,
         serviceType: String? = StreamServer.bonjourServiceType,
         port: NWEndpoint.Port = .any,
-        limits: StreamServerLimits = .standard
+        limits: StreamServerLimits = .standard,
+        networkPolicy: NetworkPolicy = .lanOnly
     ) {
         let (stream, continuation) = AsyncStream<StreamServerEvent>.makeStream(bufferingPolicy: .unbounded)
         self.events = stream
@@ -70,6 +72,7 @@ final class StreamServer: @unchecked Sendable {
         self.coordinator = coordinator
         self.responder = PairingResponder(coordinator: coordinator, store: store, hostName: hostName)
         self.limits = limits
+        self.networkPolicy = networkPolicy
         self.serviceType = serviceType
         self.requestedPort = port
     }
@@ -123,6 +126,15 @@ final class StreamServer: @unchecked Sendable {
         }
     }
 
+    /// Changes which networks may connect; connections from newly disallowed addresses are dropped.
+    func setNetworkPolicy(_ policy: NetworkPolicy) {
+        queue.async { [self] in
+            networkPolicy = policy
+            if let session = active, !policy.allows(session.connection.endpoint) { endActiveSession(session) }
+            others.values.filter { !policy.allows($0.connection.endpoint) }.forEach { $0.cancel() }
+        }
+    }
+
     /// Drops unpaired connections waiting to pair (call when the pairing window closes).
     func closePairingConnections() {
         queue.async { [self] in
@@ -157,6 +169,11 @@ final class StreamServer: @unchecked Sendable {
     }
 
     private func accept(_ connection: NWConnection) {
+        guard networkPolicy.allows(connection.endpoint) else {
+            logger.notice("Refusing a connection from outside the allowed networks")
+            connection.cancel()
+            return
+        }
         let peer = PeerConnection(connection: connection)
         let inProgress = others.values.filter { $0.role == .handshaking }.map(\.source)
         let admission = HandshakeAdmission.decide(for: peer.source, inProgress: inProgress, limits: limits)

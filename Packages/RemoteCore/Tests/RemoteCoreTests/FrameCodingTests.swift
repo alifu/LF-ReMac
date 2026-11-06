@@ -92,4 +92,66 @@ struct FrameCodingTests {
             try decoder.append(FrameEncoder.encode(sampleFrame()))
         }
     }
+    // MARK: Restricted decoders (untrusted peers)
+
+    @Test func customPayloadCapRejectsLargerLengthFromHeaderAlone() {
+        var decoder = FrameDecoder(maxPayloadBytes: 1024)
+        let header = Self.header(type: .pairRequest, length: 1025)
+
+        #expect(throws: FrameError.payloadTooLarge(1025)) {
+            try decoder.append(header)
+        }
+    }
+
+    @Test func customPayloadCapStillAcceptsFramesUpToTheCap() throws {
+        let frame = Frame(type: .pairRequest, timestampMicros: 1, payload: Data(repeating: 1, count: 1024))
+        var decoder = FrameDecoder(maxPayloadBytes: 1024)
+
+        #expect(try decoder.append(FrameEncoder.encode(frame)) == [frame])
+    }
+
+    @Test func payloadCapIsClampedToTheGlobalLimit() {
+        #expect(FrameDecoder(maxPayloadBytes: .max).maxPayloadBytes == FrameLimits.maxPayloadBytes)
+        #expect(FrameDecoder(maxPayloadBytes: -5).maxPayloadBytes == 0)
+    }
+
+    @Test func disallowedTypeIsRejectedFromItsFirstByte() {
+        var decoder = FrameDecoder(allowedTypes: [.pairRequest])
+
+        #expect(throws: FrameError.disallowedType(.videoFrame)) {
+            try decoder.append(Data([MessageType.videoFrame.rawValue]))
+        }
+    }
+
+    @Test func allowedTypePassesARestrictedDecoder() throws {
+        let frame = Frame(type: .pairRequest, timestampMicros: 3, payload: Data([1]))
+        var decoder = FrameDecoder(maxPayloadBytes: 16, allowedTypes: [.pairRequest])
+
+        #expect(try decoder.append(FrameEncoder.encode(frame)) == [frame])
+    }
+
+    @Test func restrictedDecoderStaysFailedAfterADisallowedType() {
+        var decoder = FrameDecoder(allowedTypes: [.pairRequest])
+        _ = try? decoder.append(FrameEncoder.encode(sampleFrame()))
+
+        #expect(throws: FrameError.disallowedType(.videoFrame)) {
+            try decoder.append(FrameEncoder.encode(Frame(type: .pairRequest, timestampMicros: 0, payload: Data())))
+        }
+    }
+
+    @Test func secondFrameOfDisallowedTypeInTheSameChunkFailsTheChunk() {
+        let allowed = Frame(type: .pairRequest, timestampMicros: 0, payload: Data())
+        let other = Frame(type: .input, timestampMicros: 0, payload: Data())
+        var decoder = FrameDecoder(allowedTypes: [.pairRequest])
+
+        #expect(throws: FrameError.disallowedType(.input)) {
+            try decoder.append(FrameEncoder.encode(allowed) + FrameEncoder.encode(other))
+        }
+    }
+
+    private static func header(type: MessageType, length: UInt32) -> Data {
+        var header = FrameEncoder.encode(Frame(type: type, timestampMicros: 0, payload: Data()))
+        withUnsafeBytes(of: length.bigEndian) { header.replaceSubrange(10..<14, with: $0) }
+        return header
+    }
 }

@@ -2,10 +2,21 @@ import Network
 import RemoteCore
 import SwiftUI
 
-/// Entry screen: pick a discovered Mac or type an address, then show the stream.
+/// Entry screen: connect to a paired Mac (pinned TLS), then show the stream.
+/// Pairing UI arrives in task 4.5; until then unpaired Macs only show a placeholder notice.
 struct ConnectionView: View {
-    @State private var client = StreamClient()
+    private static let pairingComingSoon = "Pairing screen coming soon."
+
+    private let credentials: PhoneCredentials
+    @State private var client: StreamClient
     @State private var browser = HostBrowser()
+    @State private var pairedHosts: [PairedHost] = []
+    @State private var notice: String?
+
+    init(credentials: PhoneCredentials) {
+        self.credentials = credentials
+        _client = State(initialValue: StreamClient(credentials: credentials))
+    }
 
     var body: some View {
         Group {
@@ -16,6 +27,7 @@ struct ConnectionView: View {
             }
         }
         .task {
+            reloadPairedHosts()
             browser.start()
         }
         .onDisappear {
@@ -27,10 +39,12 @@ struct ConnectionView: View {
         NavigationStack {
             List {
                 statusSection
+                pairedSection
                 discoveredSection
-                ManualAddressSection(onConnect: connectManually)
+                ManualAddressSection { notice = Self.pairingComingSoon }
             }
             .navigationTitle("LF-ReMac")
+            .refreshable { reloadPairedHosts() }
         }
     }
 
@@ -44,47 +58,63 @@ struct ConnectionView: View {
         case .idle, .connected:
             EmptyView()
         }
+        if let notice {
+            Section { Label(notice, systemImage: "info.circle") }
+        }
     }
 
-    private var discoveredSection: some View {
-        Section("Macs on this network") {
-            if browser.hosts.isEmpty {
-                Text(browser.errorMessage ?? "Searching… start hosting on your Mac.")
-                    .foregroundStyle(.secondary)
+    private var pairedSection: some View {
+        Section("Paired Macs") {
+            if pairedHosts.isEmpty {
+                Text("No paired Mac yet.").foregroundStyle(.secondary)
             }
-            ForEach(browser.hosts) { host in
-                Button(host.name) { client.connect(to: host.endpoint, name: host.name) }
+            ForEach(pairedHosts, id: \.fingerprint) { host in
+                if let endpoint = PairedHostTarget.endpoint(for: host, discovered: browser.hosts) {
+                    Button(host.name) { client.connect(to: endpoint, host: host) }
+                } else {
+                    LabeledContent(host.name, value: "Not found on this network")
+                }
             }
         }
     }
 
-    private func connectManually(host: String, port: UInt16) {
-        guard let port = NWEndpoint.Port(rawValue: port), !host.isEmpty else { return }
-        client.connect(to: .hostPort(host: NWEndpoint.Host(host), port: port), name: host)
+    private var discoveredSection: some View {
+        Section("Other Macs on this network") {
+            let unpaired = PairedHostTarget.unpaired(browser.hosts, paired: pairedHosts)
+            if unpaired.isEmpty {
+                Text(browser.errorMessage ?? "Searching… start hosting on your Mac.")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(unpaired) { host in
+                Button("Pair with \(host.name)") { notice = Self.pairingComingSoon }
+            }
+        }
+    }
+
+    private func reloadPairedHosts() {
+        pairedHosts = credentials.hostStore.all().sorted { $0.name < $1.name }
     }
 }
 
 private struct ManualAddressSection: View {
-    let onConnect: (String, UInt16) -> Void
+    let onPair: () -> Void
     @State private var host = ""
     @State private var portText = String(NetworkDefaults.port)
 
     var body: some View {
-        Section("Connect by address") {
+        Section("Pair by address") {
             TextField("Host or IP (e.g. 192.168.1.20)", text: $host)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .keyboardType(.URL)
             TextField("Port", text: $portText)
                 .keyboardType(.numberPad)
-            Button("Connect") {
-                onConnect(host.trimmingCharacters(in: .whitespaces), UInt16(portText) ?? NetworkDefaults.port)
-            }
-            .disabled(host.trimmingCharacters(in: .whitespaces).isEmpty)
+            Button("Pair", action: onPair)
+                .disabled(host.trimmingCharacters(in: .whitespaces).isEmpty)
         }
     }
 }
 
 #Preview {
-    ConnectionView()
+    ConnectionView(credentials: PhoneCredentials.live())
 }

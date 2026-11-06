@@ -6,50 +6,76 @@ import RemoteCore
 /// Things the host app reacts to; the server itself never touches capture or encoding.
 enum StreamServerEvent: Equatable, Sendable {
     case ready(port: UInt16)
-    case clientConnected
-    case clientDisconnected
-    /// A validated input event from the client. Whether to act on it is the host session's decision.
+    /// A paired iPhone became the active session.
+    case clientConnected(DeviceFingerprint)
+    /// The active session ended (closed, replaced, revoked).
+    case clientDisconnected(DeviceFingerprint)
+    /// A validated input event from the active, paired session. Acting on it is the host's decision.
     case input(InputEvent)
     /// The encoder should emit a fresh keyframe (new client, client request, or client fell behind).
     case keyframeNeeded
+    /// A new iPhone proved knowledge of the pairing secret and was saved to the store.
+    case devicePaired(PairedDevice)
+    case pairingFailed(PairingRejection)
     case failed(String)
 }
 
-/// TCP server that streams `Frame`s to a single client (the paired iPhone) and advertises itself over Bonjour.
+/// Mutual-TLS 1.3 server that streams `Frame`s to one paired iPhone and advertises over Bonjour.
+///
+/// Authorization (see `ConnectionAuthorizer`): the TLS verify block admits a client key only if it
+/// is paired or a pairing window is open; once `.ready`, the verified fingerprint decides the role.
+/// Only a paired connection can become the active session (a newer one replaces the older); an
+/// unpaired one is kept apart, capped, timed out, gets no video and may only send `pairRequest`.
 ///
 /// All mutable state lives on `queue`; public methods are safe to call from any thread.
-/// A newly connected client replaces the previous one. Phase 4 adds TLS and pairing on top of this.
 final class StreamServer: @unchecked Sendable {
     static let bonjourServiceType = NetworkDefaults.bonjourServiceType
     static let defaultPort = NWEndpoint.Port(rawValue: NetworkDefaults.port) ?? .any
-    private static let receiveChunkBytes = 64 * 1024
 
     let events: AsyncStream<StreamServerEvent>
 
-    private let continuation: AsyncStream<StreamServerEvent>.Continuation
-    private let queue = DispatchQueue(label: "com.alifu.lfremac.server", qos: .userInteractive)
-    private let logger = AppLog.logger(category: "server")
+    let continuation: AsyncStream<StreamServerEvent>.Continuation
+    let queue = DispatchQueue(label: "com.alifu.lfremac.server", qos: .userInteractive)
+    let logger = AppLog.logger(category: "server")
+    let identity: DeviceIdentity
+    let store: PairedDeviceStore
+    let coordinator: PairingCoordinator
+    let responder: PairingResponder
+    let limits: StreamServerLimits
     private let serviceType: String?
     private let requestedPort: NWEndpoint.Port
     private var listener: NWListener?
-    private var session: ClientSession?
+
+    // Queue-confined connection registry.
+    var active: PeerConnection?
+    var others: [ObjectIdentifier: PeerConnection] = [:]
 
     /// - Parameters:
     ///   - serviceType: Bonjour type to advertise; pass nil to skip advertising (used by tests).
     ///   - port: `.any` lets the system choose; the chosen port is reported in `.ready`.
-    init(serviceType: String? = StreamServer.bonjourServiceType, port: NWEndpoint.Port = .any) {
+    init(
+        identity: DeviceIdentity,
+        store: PairedDeviceStore,
+        coordinator: PairingCoordinator,
+        hostName: String,
+        serviceType: String? = StreamServer.bonjourServiceType,
+        port: NWEndpoint.Port = .any,
+        limits: StreamServerLimits = .standard
+    ) {
         let (stream, continuation) = AsyncStream<StreamServerEvent>.makeStream(bufferingPolicy: .unbounded)
         self.events = stream
         self.continuation = continuation
+        self.identity = identity
+        self.store = store
+        self.coordinator = coordinator
+        self.responder = PairingResponder(coordinator: coordinator, store: store, hostName: hostName)
+        self.limits = limits
         self.serviceType = serviceType
         self.requestedPort = port
     }
 
     func start() throws {
-        let tcp = NWProtocolTCP.Options()
-        tcp.noDelay = true
-        tcp.enableKeepalive = true
-        let listener = try NWListener(using: NWParameters(tls: nil, tcp: tcp), on: requestedPort)
+        let listener = try NWListener(using: try tlsParameters(), on: requestedPort)
         if let serviceType {
             listener.service = NWListener.Service(type: serviceType)
         }
@@ -61,18 +87,20 @@ final class StreamServer: @unchecked Sendable {
 
     func stop() {
         queue.async {
-            self.session?.connection.cancel()
-            self.session = nil
+            self.active?.cancel()
+            self.active = nil
+            self.others.values.forEach { $0.cancel() }
+            self.others = [:]
             self.listener?.cancel()
             self.listener = nil
             self.continuation.finish()
         }
     }
 
-    /// Sends `frame` to the current client if its send policy allows; otherwise drops it.
+    /// Sends `frame` to the active paired session if its send policy allows; otherwise drops it.
     func broadcast(_ frame: Frame) {
         queue.async { [self] in
-            guard let session, session.isReady else { return }
+            guard let session = active, case .paired = session.role else { return }
             switch session.gate.decide(for: frame) {
             case .send:
                 send(frame, on: session)
@@ -85,7 +113,33 @@ final class StreamServer: @unchecked Sendable {
         }
     }
 
+    /// Immediately drops every connection authenticated as `fingerprint` (call after revoking it).
+    func disconnect(deviceWith fingerprint: DeviceFingerprint) {
+        queue.async { [self] in
+            if let session = active, session.fingerprint == fingerprint {
+                endActiveSession(session)
+            }
+            others.values.filter { $0.fingerprint == fingerprint }.forEach { $0.cancel() }
+        }
+    }
+
+    /// Drops unpaired connections waiting to pair (call when the pairing window closes).
+    func closePairingConnections() {
+        queue.async { [self] in
+            others.values.filter(\.isPairing).forEach { $0.cancel() }
+        }
+    }
+
     // MARK: - Listener
+
+    private func tlsParameters() throws -> NWParameters {
+        let store = store
+        let coordinator = coordinator
+        // Runs on the TLS verify queue: fast, thread-safe, fails closed on store errors.
+        return try TLSParameters.server(identity: identity) { fingerprint in
+            store.contains(fingerprint) || coordinator.isOpen
+        }
+    }
 
     private func handleListener(state: NWListener.State) {
         switch state {
@@ -103,111 +157,19 @@ final class StreamServer: @unchecked Sendable {
     }
 
     private func accept(_ connection: NWConnection) {
-        session?.connection.cancel()
-        let session = ClientSession(connection: connection)
-        self.session = session
-        connection.stateUpdateHandler = { [weak self, weak session] state in
-            guard let self, let session else { return }
-            handleConnection(state: state, session: session)
+        let handshaking = others.values.filter { $0.role == .handshaking }.count
+        guard handshaking < limits.maxHandshaking else {
+            logger.notice("Too many handshakes in progress; refusing a connection")
+            connection.cancel()
+            return
         }
+        let peer = PeerConnection(connection: connection)
+        others[ObjectIdentifier(peer)] = peer
+        connection.stateUpdateHandler = { [weak self, weak peer] state in
+            guard let self, let peer else { return }
+            handleConnection(state: state, peer: peer)
+        }
+        peer.setDeadline(after: limits.handshakeTimeout, on: queue)
         connection.start(queue: queue)
-    }
-
-    // MARK: - Connection
-
-    private func handleConnection(state: NWConnection.State, session: ClientSession) {
-        switch state {
-        case .ready:
-            guard self.session === session else { return }
-            session.isReady = true
-            logger.info("Client connected")
-            continuation.yield(.clientConnected)
-            continuation.yield(.keyframeNeeded)
-            receive(on: session)
-        case .failed, .cancelled:
-            guard self.session === session else { return }
-            self.session = nil
-            logger.info("Client disconnected")
-            continuation.yield(.clientDisconnected)
-        default:
-            break
-        }
-    }
-
-    private func receive(on session: ClientSession) {
-        session.connection.receive(minimumIncompleteLength: 1, maximumLength: Self.receiveChunkBytes) {
-            [weak self, weak session] data, _, isComplete, error in
-            guard let self, let session else { return }
-            queue.async { self.handleReceived(data, isComplete: isComplete, error: error, session: session) }
-        }
-    }
-
-    private func handleReceived(_ data: Data?, isComplete: Bool, error: NWError?, session: ClientSession) {
-        guard self.session === session else { return }
-        if let data, !data.isEmpty {
-            do {
-                for frame in try session.decoder.append(data) { handle(frame, from: session) }
-            } catch {
-                logger.error("Protocol error from client: \(String(describing: error), privacy: .public)")
-                session.connection.cancel()
-                return
-            }
-        }
-        if let error {
-            logger.error("Receive failed: \(error.localizedDescription, privacy: .public)")
-            session.connection.cancel()
-        } else if isComplete {
-            session.connection.cancel()
-        } else {
-            receive(on: session)
-        }
-    }
-
-    private func handle(_ frame: Frame, from session: ClientSession) {
-        switch frame.type {
-        case .keyframeRequest:
-            continuation.yield(.keyframeNeeded)
-        case .ping:
-            // Echo for round-trip latency measurement; goes through the gate to keep its pending count balanced.
-            if session.gate.decide(for: frame) == .send { send(frame, on: session) }
-        case .input:
-            forwardInput(frame)
-        case .videoConfig, .videoFrame, .pairRequest, .pairResponse:
-            break
-        }
-    }
-
-    private func forwardInput(_ frame: Frame) {
-        do {
-            continuation.yield(.input(try InputEventCoding.event(from: frame)))
-        } catch {
-            logger.error("Dropped invalid input event: \(String(describing: error), privacy: .public)")
-        }
-    }
-
-    private func send(_ frame: Frame, on session: ClientSession) {
-        let data = FrameEncoder.encode(frame)
-        session.connection.send(content: data, completion: .contentProcessed { [weak self, weak session] error in
-            guard let self, let session else { return }
-            queue.async {
-                session.gate.sendCompleted()
-                if let error {
-                    self.logger.error("Send failed: \(error.localizedDescription, privacy: .public)")
-                    session.connection.cancel()
-                }
-            }
-        })
-    }
-}
-
-/// Per-connection state; only touched on the server queue.
-private final class ClientSession: @unchecked Sendable {
-    let connection: NWConnection
-    var decoder = FrameDecoder()
-    var gate = ClientSendGate()
-    var isReady = false
-
-    init(connection: NWConnection) {
-        self.connection = connection
     }
 }

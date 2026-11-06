@@ -29,6 +29,8 @@ public enum FrameLimits {
 public enum FrameError: Error, Equatable, Sendable {
     case unknownType(UInt8)
     case payloadTooLarge(Int)
+    /// A valid type that this decoder was configured not to accept (e.g. video from an unpaired peer).
+    case disallowedType(MessageType)
 }
 
 /// One length-prefixed message on the wire. Multi-byte fields are big-endian.

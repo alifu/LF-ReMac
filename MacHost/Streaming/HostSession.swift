@@ -14,11 +14,16 @@ final class HostSession {
     }
 
     private(set) var state: State = .stopped
+    /// Off by default and after every launch: until pairing exists (Phase 4), anyone on the network
+    /// who connects could otherwise control this Mac.
+    private(set) var isRemoteControlEnabled = false
 
     private let logger = AppLog.logger(category: "host-session")
     private var server: StreamServer?
     private var pipeline: StreamingPipeline?
     private var eventLoop: Task<Void, Never>?
+    private let injector = InputInjector()
+    private var hasWarnedAboutAccessibility = false
 
     var isHosting: Bool {
         switch state {
@@ -44,7 +49,17 @@ final class HostSession {
         }
     }
 
+    func setRemoteControl(enabled: Bool) {
+        isRemoteControlEnabled = enabled
+        if enabled {
+            if !AccessibilityPermission.isGranted { AccessibilityPermission.requestPrompt() }
+        } else {
+            injector.releaseAll()
+        }
+    }
+
     func stop() async {
+        injector.releaseAll()
         server?.stop()
         eventLoop?.cancel()
         await stopPipeline()
@@ -65,14 +80,29 @@ final class HostSession {
         case .clientConnected:
             await startPipeline()
         case .clientDisconnected:
+            injector.releaseAll()
             await stopPipeline()
             state = .listening(port: listeningPort)
         case .keyframeNeeded:
             pipeline?.forceKeyframe()
+        case .input(let input):
+            handleInput(input)
         case .failed(let message):
             await stopPipeline()
             state = .failed(message)
         }
+    }
+
+    private func handleInput(_ input: InputEvent) {
+        guard isRemoteControlEnabled else { return }
+        guard AccessibilityPermission.isGranted else {
+            if !hasWarnedAboutAccessibility {
+                hasWarnedAboutAccessibility = true
+                logger.error("Remote control is on but Accessibility permission is missing")
+            }
+            return
+        }
+        injector.inject(input)
     }
 
     private func startPipeline() async {

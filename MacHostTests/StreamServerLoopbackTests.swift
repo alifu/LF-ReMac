@@ -8,7 +8,7 @@ import Testing
 struct StreamServerLoopbackTests {
     private static let timeout: Duration = .seconds(5)
 
-    private func startServer() async throws -> (StreamServer, UInt16) {
+    fileprivate func startServer() async throws -> (StreamServer, UInt16) {
         let server = StreamServer(serviceType: nil)
         try server.start()
         for await event in server.events {
@@ -17,7 +17,7 @@ struct StreamServerLoopbackTests {
         throw LoopbackError.serverNeverReady
     }
 
-    private func connect(to port: UInt16) -> LoopbackClient {
+    fileprivate func connect(to port: UInt16) -> LoopbackClient {
         LoopbackClient(port: port)
     }
 
@@ -93,7 +93,7 @@ struct StreamServerLoopbackTests {
         try await Self.waitFor(.clientDisconnected, on: server)
     }
 
-    private static func waitFor(_ target: StreamServerEvent, on server: StreamServer) async throws {
+    fileprivate static func waitFor(_ target: StreamServerEvent, on server: StreamServer) async throws {
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
                 for await event in server.events where event == target { return }
@@ -116,7 +116,7 @@ private enum LoopbackError: Error {
 }
 
 /// Minimal client speaking the frame protocol over a real socket.
-private final class LoopbackClient: @unchecked Sendable {
+fileprivate final class LoopbackClient: @unchecked Sendable {
     private let connection: NWConnection
     private let queue = DispatchQueue(label: "loopback.client")
     private let box = FrameBox()
@@ -167,5 +167,34 @@ private final class FrameBox: @unchecked Sendable {
         lock.withLock {
             if let decoded = try? decoder.append(data) { stored += decoded }
         }
+    }
+}
+
+extension StreamServerLoopbackTests {
+    @Test func validInputFromClientBecomesInputEvent() async throws {
+        let (server, port) = try await startServer()
+        defer { server.stop() }
+        let client = connect(to: port)
+        defer { client.close() }
+        try await Self.waitFor(.clientConnected, on: server)
+
+        let event = InputEvent.button(.left, isDown: true, at: NormalizedPoint(x: 0.3, y: 0.4))
+        client.send(try InputEventCoding.frame(for: event, timestampMicros: 1))
+
+        try await Self.waitFor(.input(event), on: server)
+    }
+
+    @Test func invalidInputIsDroppedAndConnectionStaysUp() async throws {
+        let (server, port) = try await startServer()
+        defer { server.stop() }
+        let client = connect(to: port)
+        defer { client.close() }
+        try await Self.waitFor(.clientConnected, on: server)
+
+        client.send(Frame(type: .input, timestampMicros: 0, payload: Data("not json".utf8)))
+        let valid = InputEvent.text("ok")
+        client.send(try InputEventCoding.frame(for: valid, timestampMicros: 2))
+
+        try await Self.waitFor(.input(valid), on: server)
     }
 }

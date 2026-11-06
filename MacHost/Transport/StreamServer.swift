@@ -8,6 +8,8 @@ enum StreamServerEvent: Equatable, Sendable {
     case ready(port: UInt16)
     case clientConnected
     case clientDisconnected
+    /// A validated input event from the client. Whether to act on it is the host session's decision.
+    case input(InputEvent)
     /// The encoder should emit a fresh keyframe (new client, client request, or client fell behind).
     case keyframeNeeded
     case failed(String)
@@ -168,8 +170,18 @@ final class StreamServer: @unchecked Sendable {
         case .ping:
             // Echo for round-trip latency measurement; goes through the gate to keep its pending count balanced.
             if session.gate.decide(for: frame) == .send { send(frame, on: session) }
-        case .videoConfig, .videoFrame, .input:
-            break  // input handling arrives in Phase 3
+        case .input:
+            forwardInput(frame)
+        case .videoConfig, .videoFrame:
+            break
+        }
+    }
+
+    private func forwardInput(_ frame: Frame) {
+        do {
+            continuation.yield(.input(try InputEventCoding.event(from: frame)))
+        } catch {
+            logger.error("Dropped invalid input event: \(String(describing: error), privacy: .public)")
         }
     }
 

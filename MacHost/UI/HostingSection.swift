@@ -15,6 +15,16 @@ struct HostingSection: View {
                 }
             }
         }
+        Divider()
+        Toggle("Allow Remote Control", isOn: Binding(
+            get: { session.isRemoteControlEnabled },
+            set: { session.setRemoteControl(enabled: $0) }
+        ))
+        if session.isRemoteControlEnabled && !AccessibilityPermission.isGranted {
+            Button("Grant Accessibility Access…") {
+                AccessibilityPermission.requestPrompt()
+            }
+        }
     }
 
     private var statusText: String {

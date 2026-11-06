@@ -189,6 +189,17 @@ final class StreamClient {
         "audioEnabled.\(host.fingerprint)"
     }
 
+    #if DEBUG
+    /// Screenshot mode only: shows the connected UI with made-up values and no network.
+    func demoConnect(hostName: String, stats: StreamStats, displays: HostDisplays) {
+        state = .connected(hostName)
+        self.stats = stats
+        self.displays = displays
+        videoSize = CGSize(width: 2560, height: 1440)
+        isAudioOn = true
+    }
+    #endif
+
     private func makeLink(endpoint: NWEndpoint, host: PairedHost) -> StreamLink? {
         do {
             let identity = try credentials.identity()

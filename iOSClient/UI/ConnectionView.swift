@@ -133,7 +133,7 @@ struct ConnectionView: View {
     private func pairedRow(_ host: PairedHost) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             if !PairedHostTarget.candidates(for: host, discovered: browser.hosts).isEmpty {
-                Button(host.name) { client.connect(to: host, discovered: browser.hosts) }
+                Button(host.name) { connect(to: host) }
             } else {
                 LabeledContent(host.name, value: "Not found on this network")
             }
@@ -154,6 +154,16 @@ struct ConnectionView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private func connect(to host: PairedHost) {
+        #if DEBUG
+        if ScreenshotMode.isOn {
+            client.applyDemoState()
+            return
+        }
+        #endif
+        client.connect(to: host, discovered: browser.hosts)
     }
 
     private func wake(_ host: PairedHost) {

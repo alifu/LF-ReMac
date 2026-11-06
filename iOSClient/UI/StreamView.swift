@@ -22,7 +22,7 @@ struct StreamView: View {
 
     var body: some View {
         ZStack {
-            VideoView(layer: client.renderer.displayLayer, zoom: zoom)
+            video
             InputSurface(controller: pointer, videoSize: client.videoSize, zoom: zoom)
             KeyboardHost(isActive: $isKeyboardActive, keyboard: keyboard)
                 .frame(width: 0, height: 0)
@@ -46,6 +46,19 @@ struct StreamView: View {
         .onChange(of: client.videoSize) { _, _ in pointer.resetZoom() }
         .onChange(of: pointerMode) { _, mode in pointer.mode = mode }
         .onAppear { pointer.onZoomChange = { zoom = $0 } }
+    }
+
+    @ViewBuilder
+    private var video: some View {
+        #if DEBUG
+        if ScreenshotMode.isOn {
+            DemoDesktopView()
+        } else {
+            VideoView(layer: client.renderer.displayLayer, zoom: zoom)
+        }
+        #else
+        VideoView(layer: client.renderer.displayLayer, zoom: zoom)
+        #endif
     }
 
     private var displayMenu: some View {

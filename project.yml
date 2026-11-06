@@ -42,6 +42,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.alifu.lfremac.host
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_HARDENED_RUNTIME: YES
     scheme:
       testTargets: [MacHostTests]
@@ -67,6 +68,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.alifu.lfremac.client
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
     scheme:
       testTargets: [iOSClientTests]
@@ -90,3 +92,41 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: iOSClient
+
+  iOSClientUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [iOSClientUITests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: iOSClient
+    dependencies:
+      - target: iOSClient
+
+  MacHostUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources: [MacHostUITests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: MacHost
+    dependencies:
+      - target: MacHost
+
+schemes:
+  MacHostScreenshots:
+    build:
+      targets:
+        MacHost: all
+        MacHostUITests: [test]
+    test:
+      targets: [MacHostUITests]
+  iOSClientScreenshots:
+    build:
+      targets:
+        iOSClient: all
+        iOSClientUITests: [test]
+    test:
+      targets: [iOSClientUITests]

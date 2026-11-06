@@ -70,10 +70,12 @@ struct PairingWindow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Text("On your iPhone open LF-ReMac and tap Pair, then scan this code or type the code.")
                 .font(.callout)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 Text("Expires in \(PairingCountdown.text(until: expiresAt, now: context.date))")
                     .font(.callout.monospacedDigit())
@@ -84,6 +86,7 @@ struct PairingWindow: View {
                     .font(.callout)
                     .foregroundStyle(.orange)
                     .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Button("Cancel", role: .cancel) { closeWindow() }
                 .keyboardShortcut(.cancelAction)

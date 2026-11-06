@@ -414,3 +414,16 @@ final class HostSession {
         await pipeline.stop()
     }
 }
+
+#if DEBUG
+extension HostSession {
+    /// Screenshot mode only: shows a hosting, connected, mid-pairing Mac without a server or any capture.
+    func applyDemoState(connected: PairedDevice, invitation: PairingInvitation) {
+        state = .streaming
+        connectedDeviceName = connected.name
+        connectedDeviceFingerprint = connected.fingerprint
+        pairingState = .open(invitation, expiresAt: Date().addingTimeInterval(105))
+        refreshPairedDevices()
+    }
+}
+#endif

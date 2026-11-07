@@ -39,6 +39,7 @@ final class HostSession {
     @ObservationIgnored private let logger = AppLog.logger(category: "host-session")
     @ObservationIgnored private let injector = InputInjector()
     @ObservationIgnored private let power: PowerManager
+    @ObservationIgnored private let displayWaker: DisplayWaker
     @ObservationIgnored private var identity: DeviceIdentity?
     @ObservationIgnored private var coordinator: PairingCoordinator?
     @ObservationIgnored private var server: StreamServer?
@@ -62,9 +63,13 @@ final class HostSession {
         Task { await self?.displaysChanged() }
     }
 
+    /// Time for a sleeping display to light up before capture starts.
+    private static let displayWakeDelay: Duration = .seconds(1)
+
     init(environment: HostEnvironment = .live) {
         self.environment = environment
         self.power = PowerManager(acquire: environment.acquirePowerAssertion)
+        self.displayWaker = DisplayWaker(wake: environment.wakeDisplay, hold: environment.holdDisplay)
         self.keepsMacAwake = environment.settings.bool(forKey: HostEnvironment.keepAwakeKey) ?? true
         self.allowsTailscale = environment.settings.bool(forKey: HostEnvironment.allowTailscaleKey) ?? false
         self.store = PairedDeviceStore(keyStore: environment.keyStore, key: HostEnvironment.pairedDevicesKey)
@@ -140,6 +145,7 @@ final class HostSession {
         connectedDeviceName = nil
         connectedDeviceFingerprint = nil
         power.setKeepAwake(false)
+        displayWaker.releaseHold()
         state = .stopped
     }
 
@@ -251,6 +257,8 @@ final class HostSession {
             sessionGeneration += 1
             requestedDisplayUUID = environment.settings.string(forKey: HostEnvironment.selectedDisplayKey(for: fingerprint))
             displayWatcher.start()
+            displayWaker.wakeAndHold()  // a sleeping display would capture as black
+            try? await Task.sleep(for: Self.displayWakeDelay)
             await startPipeline()
         case .clientHello(let capabilities):
             peerCapabilities = capabilities
@@ -267,6 +275,7 @@ final class HostSession {
             isAudioRequested = false
             sessionGeneration += 1
             injector.releaseAll()
+            displayWaker.releaseHold()
             connectedDeviceName = nil
             connectedDeviceFingerprint = nil
             await stopPipeline()

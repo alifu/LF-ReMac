@@ -26,6 +26,9 @@ struct HostEnvironment: Sendable {
     /// Defaults are inert (in-memory settings, no power assertion) so tests never touch the system.
     var settings: any HostSettings = MemorySettings()
     var acquirePowerAssertion: PowerManager.Acquire = { _ in nil }
+    /// Wakes a sleeping display / keeps it on while an iPhone is connected. Inert by default.
+    var wakeDisplay: DisplayWaker.Wake = { _ in false }
+    var holdDisplay: DisplayWaker.Hold = { _ in nil }
     /// Current displays. Empty by default so tests never touch real screens (the pipeline then uses the main display).
     var displays: @Sendable () -> [DisplayDescriptor] = { [] }
     /// Hardware addresses reported for Wake-on-LAN. Empty by default so tests never read the real network.
@@ -42,6 +45,8 @@ struct HostEnvironment: Sendable {
         limits: .standard,
         settings: UserDefaults.standard,
         acquirePowerAssertion: PowerManager.systemAcquire,
+        wakeDisplay: DisplayWaker.systemWake,
+        holdDisplay: DisplayWaker.systemHold,
         displays: { SystemDisplays.current() },
         wakeMACs: { HardwareAddresses.current() }
     )
